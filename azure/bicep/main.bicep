@@ -1,0 +1,112 @@
+// LumiTure Azure Onboarding — Bicep module
+//
+// Declarative alternative to the bash / Cloud Shell flow. Grants the LumiTure
+// service principal the two read roles and creates the daily cost export.
+// Same end state as lumiture-azure-onboard.sh.
+//
+// PREREQUISITE (browser, un-scriptable): LumiTure's multi-tenant SP must already
+// be consented in this tenant (done via the LumiTure "Connect Azure" wizard).
+// Pass its objectId as lumitureSpObjectId.
+//
+// Deploy at subscription scope:
+//   az deployment sub create \
+//     --location eastasia \
+//     --template-file main.bicep \
+//     --parameters lumitureSpObjectId=<sp-object-id> \
+//                  storageResourceGroup=lumiture-billing-rg \
+//                  storageAccountName=lumitureexport123
+
+targetScope = 'subscription'
+
+@description('Object (principal) ID of LumiTure\'s consented service principal in this tenant.')
+param lumitureSpObjectId string
+
+@description('Resource group to hold the export storage account (created if absent).')
+param storageResourceGroup string
+
+@description('Globally-unique storage account name for the cost export (3-24 lowercase chars).')
+param storageAccountName string
+
+@description('Blob container for exports.')
+param containerName string = 'billing-exports'
+
+@description('Region for created resources.')
+param location string = 'eastasia'
+
+@description('Cost Management export name.')
+param exportName string = 'lumiture-daily-actual-cost'
+
+// Built-in role definition IDs (stable across tenants)
+var costManagementReaderRoleId = '72fafb9e-0641-4937-9268-a91bfd8191a3' // Cost Management Reader
+var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
+
+resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
+  name: storageResourceGroup
+  location: location
+}
+
+module storage 'storage.bicep' = {
+  name: 'lumiture-export-storage'
+  scope: rg
+  params: {
+    storageAccountName: storageAccountName
+    containerName: containerName
+    location: location
+  }
+}
+
+// Subscription-scope: Cost Management Reader to LumiTure SP
+resource costReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, lumitureSpObjectId, costManagementReaderRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', costManagementReaderRoleId)
+    principalId: lumitureSpObjectId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Storage Blob Data Reader on the export storage account, granted in the RG module
+module blobReader 'role-storage.bicep' = {
+  name: 'lumiture-blob-reader'
+  scope: rg
+  params: {
+    storageAccountName: storageAccountName
+    lumitureSpObjectId: lumitureSpObjectId
+    roleDefinitionId: storageBlobDataReaderRoleId
+  }
+  dependsOn: [ storage ]
+}
+
+// Daily ActualCost export at subscription scope
+resource export 'Microsoft.CostManagement/exports@2023-08-01' = {
+  name: exportName
+  properties: {
+    schedule: {
+      status: 'Active'
+      recurrence: 'Daily'
+      recurrencePeriod: {
+        from: '2026-06-23T00:00:00Z'
+        to: '2030-12-31T00:00:00Z'
+      }
+    }
+    format: 'Csv'
+    deliveryInfo: {
+      destination: {
+        resourceId: storage.outputs.storageAccountId
+        container: containerName
+        rootFolderPath: '${subscription().tenantId}/${subscription().subscriptionId}/daily-actual-cost'
+      }
+    }
+    definition: {
+      type: 'ActualCost'
+      timeframe: 'MonthToDate'
+      dataSet: {
+        granularity: 'Daily'
+      }
+    }
+  }
+}
+
+output storageAccountId string = storage.outputs.storageAccountId
+output tenantId string = subscription().tenantId
+output subscriptionId string = subscription().subscriptionId

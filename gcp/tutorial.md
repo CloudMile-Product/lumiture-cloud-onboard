@@ -1,6 +1,6 @@
 # LumiTure GCP Onboarding — Cloud Shell Walkthrough
 
-<walkthrough-author name="LumiTure Team" repositoryUrl="https://github.com/CloudMile-Product/lumiture-gcp-onboard"></walkthrough-author>
+<walkthrough-author name="LumiTure Team" repositoryUrl="https://github.com/CloudMile-Product/lumiture-cloud-onboard"></walkthrough-author>
 
 Welcome 👋 This 5-minute walkthrough connects your GCP Cloud Billing data to LumiTure. Everything runs in this browser — no install on your computer.
 
@@ -163,4 +163,4 @@ This walkthrough didn't install anything on your computer. The Cloud Shell sessi
 
 ---
 
-**Issues?** File at <https://github.com/CloudMile-Product/lumiture-gcp-onboard/issues> or contact your LumiTure rep.
+**Issues?** File at <https://github.com/CloudMile-Product/lumiture-cloud-onboard/issues> or contact your LumiTure rep.

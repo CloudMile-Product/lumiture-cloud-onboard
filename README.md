@@ -1,33 +1,31 @@
-# LumiTure GCP Onboarding — Cloud Shell
+# LumiTure Cloud Onboarding
 
-> Guided **"Open in Cloud Shell"** onboarding for [LumiTure](https://app.lumiture.ai): the customer grants LumiTure read-only access to their GCP billing data — entirely in their own Google identity, zero install. Public so the Cloud Shell URL works without a GitHub auth prompt.
+> Guided, low-install, customer-driven onboarding flows that grant [LumiTure](https://app.lumiture.ai) **read-only** access to a customer's cloud **billing/cost data** — each on that cloud's own native surface, in the customer's own identity. LumiTure never sees the customer's credentials.
 
-## Try it
+This repo holds **one sibling flow per cloud**. They share a consistent shape (a guided entry point + the same "form values" contract the in-product wizard expects) but each runs on its cloud's native surface — we deliberately do **not** couple three credential ceremonies into one apply. See the [decision record](#design-decision).
 
-[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/CloudMile-Product/lumiture-gcp-onboard&cloudshell_tutorial=tutorial.md&show=terminal)
+## Clouds
 
-Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (no IDE editor — `show=terminal`) → guided walkthrough → done.
+| Cloud | Folder | Native surface | Customer grant | IaC | Status |
+|---|---|---|---|---|---|
+| **GCP** | [`gcp/`](gcp/) | Google Cloud Shell ([badge](gcp/README.md#try-it)) | IAM on existing BQ export | Terraform | ✅ Live |
+| **Azure** | [`azure/`](azure/) | Azure Cloud Shell + browser admin-consent | Admin-consent + Cost Management Reader + Storage Blob Data Reader | Bicep | 🧪 POC |
+| **AWS** | — | CloudFormation Launch-Stack / AWS CloudShell | Cross-account IAM role (+ ExternalId) | CloudFormation | ⬜ Planned |
 
-## What's in this repo
+Start with the per-cloud README:
+- **[`gcp/README.md`](gcp/README.md)** — "Open in Cloud Shell" badge → guided grant
+- **[`azure/README.md`](azure/README.md)** — open Azure Cloud Shell → clone → guided grant
 
-| File | Purpose |
-|---|---|
-| `tutorial.md` | Step-by-step walkthrough Cloud Shell renders in a side panel |
-| `onboard-wrapper.sh` | Interactive bash wrapper the customer runs in the tutorial |
-| `lumiture-gcp-onboard.sh` | Underlying onboarding script (discovery + IAM grant + form-value output) |
-| `terraform/` | Terraform module — declarative alternative to the bash flow (same IAM grant + optional auto-submit). See `terraform/README.md` and `terraform/examples/`. |
+## Why per-cloud, not one unified apply
 
-**Two ways to run the grant:** the **bash / Cloud Shell** flow above (zero-install, customer-driven) or the **Terraform module** in `terraform/` (for teams that prefer IaC / repeatable applies). Both grant the same two roles and emit the same wizard form values.
+Each cloud's grant is structurally different (GCP IAM on a BQ dataset; Azure admin-consent + RBAC + a cost export; AWS a cross-account role), runs on a different native surface, and lands data through a different path. Forcing them into a single Terraform apply or one Cloud Shell run would couple three independent credential ceremonies and forfeit the zero-credential property each native shell provides.
 
-## What it does
+**What is shared** is the *packaging and contract*, not the execution: a consistent variable/output shape per cloud, and a parallel same-shaped onboarding flow.
 
-1. Discovers the customer's Cloud Billing Account and BigQuery export dataset
-2. Validates the export is producing data
-3. Grants `BigQuery Data Viewer` on the export datasets **and** `Billing Account Viewer` (`roles/billing.viewer`) on the billing account to LumiTure's read-only service account — both required by LumiTure's integration validation
-4. Prints the form values to paste into the LumiTure wizard
+## Design decision
 
-Zero install on the customer's machine. Auth stays in the customer's Google identity. LumiTure never sees the customer's credentials.
+The per-cloud-surfaces rationale is recorded as an ADR in the LumiTure specs repo: `infra/decisions/0001-per-cloud-onboarding-surfaces.md`.
 
 ## License
 
-MIT -- see [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
