@@ -265,8 +265,13 @@ validate_grants() {
 
 create_export() {
   local name="$1" export_type="$2" subdir="$3"
-  log "Phase 2.5 — Creating ${export_type} export '${name}' → ${STORAGE_ACCOUNT}/${CONTAINER}/${TENANT_ID}/${SUBSCRIPTION_ID}…"
-  run az costmanagement export create \
+  # az costmanagement export create REQUIRES --recurrence-period when --recurrence is set,
+  # and the start date must be in the future. GNU date (Cloud Shell) first, BSD/macOS fallback.
+  local from_date to_date
+  from_date=$(date -u -d '+1 day' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+1d +%Y-%m-%dT00:00:00Z)
+  to_date=$(date -u -d '+5 years' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+5y +%Y-%m-%dT00:00:00Z)
+  log "Phase 2.5 — Creating ${export_type} export '${name}' → ${STORAGE_ACCOUNT}/${CONTAINER}/${TENANT_ID}/${SUBSCRIPTION_ID}/${subdir} (daily ${from_date}…${to_date})…"
+  if run az costmanagement export create \
     --name "${name}" \
     --type "${export_type}" \
     --scope "subscriptions/${SUBSCRIPTION_ID}" \
@@ -275,10 +280,13 @@ create_export() {
     --storage-directory "${TENANT_ID}/${SUBSCRIPTION_ID}/${subdir}" \
     --timeframe MonthToDate \
     --recurrence Daily \
+    --recurrence-period from="${from_date}" to="${to_date}" \
     --schedule-status Active \
-    -o none 2>/dev/null \
-    || warn "Export create returned non-zero — check 'az costmanagement export show --name ${name}'. (FOCUS export may need a newer az / portal step.)"
-  ok "Export '${name}' configured (first run lands within ~24h)"
+    -o none; then
+    ok "Export '${name}' configured (first run lands within ~24h)"
+  else
+    warn "Export '${name}' create failed — see the az error above. (FOCUS export may need a newer az / portal step.)"
+  fi
 }
 
 # -----------------------------------------------------------------------------
