@@ -28,6 +28,9 @@
 #                            (usage/rightsizing metrics) + optional usage submit
 #   --scoping-project        <project-id>                scoping project for usage metrics
 #                                                        (default: --export-project)
+#   --skip-billing           usage-only: skip all billing discovery/grants and do JUST
+#                            the usage grant. Implies --with-usage; requires
+#                            --scoping-project. For orgs already billing-onboarded.
 #   --lumiture-sa            <email>                     default: prod SA (lumiture-client@tw-rd-app-finops-prod...)
 #   --lumiture-api           <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt           <token>                     provide to auto-submit; omit to finish in the wizard
@@ -71,6 +74,7 @@ DETAILED_USAGE_DATASET=""
 PRICING_DATASET=""
 GRANT_SCOPE="dataset"
 WITH_USAGE=0
+SKIP_BILLING=0
 SCOPING_PROJECT_ID=""
 LUMITURE_SA=""
 LUMITURE_API=""
@@ -86,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --pricing-dataset) PRICING_DATASET="$2"; shift 2 ;;
     --grant-scope) GRANT_SCOPE="$2"; shift 2 ;;
     --with-usage) WITH_USAGE=1; shift ;;
+    --skip-billing) SKIP_BILLING=1; shift ;;
     --scoping-project) SCOPING_PROJECT_ID="$2"; shift 2 ;;
     --lumiture-sa) LUMITURE_SA="$2"; shift 2 ;;
     --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
@@ -127,18 +132,25 @@ preflight() {
   log "Pre-flight checks…"
 
   command -v gcloud >/dev/null || die "gcloud CLI not found"
-  command -v bq >/dev/null || die "bq CLI not found"
   command -v jq >/dev/null || die "jq not found — install via 'brew install jq' / 'apt install jq'"
-  ok "Required tools installed (gcloud, bq, jq)"
+  # bq + ADC are only needed for the billing reads; usage-only mode skips them.
+  if [[ "${SKIP_BILLING}" -eq 0 ]]; then
+    command -v bq >/dev/null || die "bq CLI not found"
+    ok "Required tools installed (gcloud, bq, jq)"
+  else
+    ok "Required tools installed (gcloud, jq) — usage-only, bq not needed"
+  fi
 
   local active_acct
   active_acct=$(gcloud config get-value account 2>/dev/null || true)
   [[ -n "${active_acct}" ]] || die "No active gcloud account — run 'gcloud auth login' first"
   ok "Active gcloud account: ${active_acct}"
 
-  gcloud auth application-default print-access-token >/dev/null 2>&1 \
-    || die "Application Default Credentials not set — run 'gcloud auth application-default login'"
-  ok "ADC configured"
+  if [[ "${SKIP_BILLING}" -eq 0 ]]; then
+    gcloud auth application-default print-access-token >/dev/null 2>&1 \
+      || die "Application Default Credentials not set — run 'gcloud auth application-default login'"
+    ok "ADC configured"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -431,6 +443,17 @@ grant_usage_monitoring() {
 
 main() {
   preflight
+
+  # Usage-only mode: skip all billing work, do just the monitoring grant + submit.
+  if [[ "${SKIP_BILLING}" -eq 1 ]]; then
+    [[ -n "${SCOPING_PROJECT_ID}" ]] || die "--skip-billing requires --scoping-project (no --export-project to default from in usage-only mode)"
+    WITH_USAGE=1
+    log "--skip-billing — usage-only run (no billing discovery/grants)"
+    grant_usage_monitoring
+    ok "GCP usage-only onboarding complete"
+    return 0
+  fi
+
   discover_billing_account
   discover_export_project
   validate_freshness

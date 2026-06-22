@@ -30,6 +30,13 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 Zero install on the customer's machine. Auth stays in the customer's Google identity. LumiTure never sees the customer's credentials.
 
 > **Billing vs usage** (same split as the Azure flow): billing (cost) is the core flow; usage (rightsizing, Monitoring metrics) is opt-in via `--with-usage`. ⚠️ Don't confuse GCP's *"Detailed Usage Cost"* (a billing export dataset) with *usage/rightsizing* — the script's `--detailed-usage-dataset` is billing; `--with-usage` is metrics.
+>
+> **Already billing-onboarded and just need usage?** Use **`--skip-billing`** (usage-only): it skips all billing discovery/grants and does only the `monitoring.viewer` grant + optional usage submit. Implies `--with-usage`; requires `--scoping-project`; needs neither `bq` nor ADC. Example:
+> ```bash
+> ./lumiture-gcp-onboard.sh --skip-billing \
+>   --scoping-project <project-id> \
+>   --lumiture-sa <env-SA-email>          # dev SA for sandbox, prod SA (default) for prod
+> ```
 
 ## License
 
