@@ -40,9 +40,12 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 1. Ensures a storage account + container exist for the Cost Management export
 2. Grants `Cost Management Reader` (subscription) and `Storage Blob Data Reader` (storage account) to LumiTure's SP
 3. Creates a daily `ActualCost` export (optionally a FOCUS export with `--with-focus`)
-4. Prints the form values to enter in the LumiTure wizard
+4. **(opt-in `--with-usage`)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Billing alone doesn't need it; Cost Management Reader doesn't cover Monitor metrics. Mirrors the backend's `get_usage_custom_role`; validated by the `usage-check` endpoint (which lists VMs).
+5. Prints the form values to enter in the LumiTure wizard
 
 Zero install on the customer's machine. Auth stays in the customer's Azure identity. LumiTure never sees the customer's credentials.
+
+> **Billing vs usage are separable.** Billing (cost) is the core flow; usage (rightsizing) is opt-in via `--with-usage` because it grants a broader, compute+metrics read role. Run with `--with-usage` for full FinOps.
 
 ## ⚠️ POC status
 

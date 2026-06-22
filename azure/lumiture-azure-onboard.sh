@@ -30,6 +30,9 @@
 #   --container         <name>          default: billing-exports
 #   --export-name       <name>          default: lumiture-daily-actual-cost
 #   --with-focus                        also create a FOCUS-format export (daily-focus-cost)
+#   --with-usage                        also create+assign the usage custom role (VM + Monitor
+#                                       metrics read) for rightsizing/usage data — billing alone
+#                                       does not need it; opt in for full FinOps
 #   --lumiture-app-id   <GUID>          default: prod LumiTure multi-tenant SP app id
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt      <token>         provide to auto-submit; omit to finish in the wizard
@@ -80,6 +83,7 @@ LOCATION="eastasia"
 CONTAINER="billing-exports"
 EXPORT_NAME="lumiture-daily-actual-cost"
 WITH_FOCUS=0
+WITH_USAGE=0
 LUMITURE_APP_ID=""
 LUMITURE_API=""
 LUMITURE_JWT=""
@@ -97,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --container) CONTAINER="$2"; shift 2 ;;
     --export-name) EXPORT_NAME="$2"; shift 2 ;;
     --with-focus) WITH_FOCUS=1; shift ;;
+    --with-usage) WITH_USAGE=1; shift ;;
     --lumiture-app-id) LUMITURE_APP_ID="$2"; shift 2 ;;
     --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
     --lumiture-jwt) LUMITURE_JWT="$2"; shift 2 ;;
@@ -290,6 +295,62 @@ create_export() {
 }
 
 # -----------------------------------------------------------------------------
+# Phase 2.6 — Usage custom role (opt-in: --with-usage)
+# Usage/rightsizing data needs the SP to read VMs + Azure Monitor metrics, which
+# Cost Management Reader does NOT cover. LumiTure defines a custom role for this
+# (backend: AzureAuthorizationService.get_usage_custom_role); we create + assign it.
+# The role name is cosmetic for the customer; the LumiTure usage-check validates by
+# listing VMs, so what matters is the action set below matching the backend.
+# -----------------------------------------------------------------------------
+
+grant_usage_role() {
+  local role_name="LumiTure FinOps Reader"
+  local scope="/subscriptions/${SUBSCRIPTION_ID}"
+  local role_def
+  role_def=$(cat <<JSON
+{
+  "Name": "${role_name}",
+  "IsCustom": true,
+  "Description": "LumiTure FinOps usage-metrics reader (VM inventory + Azure Monitor metrics).",
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/instanceView/read",
+    "Microsoft.Compute/skus/read",
+    "Microsoft.Insights/Metrics/Read",
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/read"
+  ],
+  "AssignableScopes": ["${scope}"]
+}
+JSON
+)
+  log "Phase 2.6 — Ensuring custom usage role '${role_name}' on subscription…"
+  if az role definition list --name "${role_name}" --scope "${scope}" --query "[0].roleName" -o tsv --only-show-errors 2>/dev/null | grep -q .; then
+    run az role definition update --role-definition "${role_def}" -o none || warn "Usage role update failed — see error above"
+  else
+    run az role definition create --role-definition "${role_def}" -o none || { warn "Usage role create failed — see error above"; return 0; }
+  fi
+
+  log "Phase 2.6 — Assigning '${role_name}' to LumiTure SP (custom roles can take ~1m to propagate)…"
+  local i
+  for i in 1 2 3 4 5 6; do
+    if run az role assignment create \
+        --assignee-object-id "${SP_OBJECT_ID}" \
+        --assignee-principal-type ServicePrincipal \
+        --role "${role_name}" \
+        --scope "${scope}" \
+        -o none 2>/dev/null; then
+      ok "Usage custom role assigned to LumiTure SP"
+      return 0
+    fi
+    [[ "${DRY_RUN}" -eq 1 ]] && { ok "DRY-RUN: usage role assignment"; return 0; }
+    warn "  role not yet propagated (attempt ${i}/6) — retrying in 15s…"
+    sleep 15
+  done
+  warn "Usage role assignment did not succeed after retries — re-run, or assign '${role_name}' to the SP in the portal."
+}
+
+# -----------------------------------------------------------------------------
 # Phase 3 — Output / Submit
 # -----------------------------------------------------------------------------
 
@@ -364,6 +425,8 @@ main() {
   else
     log "--skip-export set — grants applied, no Cost Management export created"
   fi
+
+  [[ "${WITH_USAGE}" -eq 1 ]] && grant_usage_role
 
   emit_form_values
   submit_to_lumiture
