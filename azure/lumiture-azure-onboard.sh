@@ -50,11 +50,11 @@ set -euo pipefail
 # in-product wizard), analogous to the GCP read-only service-account email.
 # -----------------------------------------------------------------------------
 
-# TODO(fill-in): replace with LumiTure's PROD Azure multi-tenant SP App (client) ID.
-# Pull from the in-product Azure wizard, or from prod config (the same client id
-# used to build the admin-consent URL). Kept as a placeholder so the POC stays
-# free of any assumed credential.
-readonly LUMITURE_APP_ID_PROD="REPLACE_WITH_LUMITURE_AZURE_APP_ID"
+# LumiTure's PROD Azure multi-tenant SP App (client) ID — public by design (it's
+# AZURE_LUMITURE_SP_CLIENT_ID in .env.prod, also the Microsoft sign-in client id;
+# shown in the in-product wizard). NOT a secret. Override with --lumiture-app-id
+# for non-prod (sandbox/dev uses 99e6a4c9-8c5b-4481-bd9b-522cd30ec3c3).
+readonly LUMITURE_APP_ID_PROD="c871cf6f-dd8d-487a-a908-a66245655b0e"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
 readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-data-integration/azure"
 readonly ROLE_COST_READER="Cost Management Reader"
@@ -288,7 +288,11 @@ create_export() {
     --recurrence-period from="${from_date}" to="${to_date}" \
     --schedule-status Active \
     -o none; then
-    ok "Export '${name}' configured (first run lands within ~24h)"
+    ok "Export '${name}' created (first Azure run lands in ~24h)"
+    warn "  NOTE: billing DATA does not reach LumiTure from this export alone. LumiTure"
+    warn "  ingests from its OWN blob via an event trigger — the export must be wired to"
+    warn "  AZURE_BILLING_EVENT_TRIGGER_URL (GET /platforms/azure/authorization/event-trigger-url/)."
+    warn "  That step is NOT automated here yet — see azure/README.md 'Known gap'."
   else
     warn "Export '${name}' create failed — see the az error above. (FOCUS export may need a newer az / portal step.)"
   fi

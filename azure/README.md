@@ -47,10 +47,11 @@ Zero install on the customer's machine. Auth stays in the customer's Azure ident
 
 > **Billing vs usage are separable.** Billing (cost) is the core flow; usage (rightsizing) is opt-in via `--with-usage` because it grants a broader, compute+metrics read role. Run with `--with-usage` for full FinOps.
 
-## ⚠️ POC status
+## ✅ Validated / ⚠️ Known gap
 
-- `LUMITURE_APP_ID_PROD` in `lumiture-azure-onboard.sh` is a **placeholder** — fill in LumiTure's real prod multi-tenant SP App (client) ID before any real run (it's public, shown in the wizard), or pass `--lumiture-app-id`.
-- The export `--storage-directory` path convention (`<tenant>/<subscription>/daily-actual-cost/`) must match what LumiTure's `transfer_azure_billing_data` task reads (`{tenant_id}/{subscription_id}/{YYYYMM}/daily-actual-cost/`) — verify against `backend/platforms/azure.md` before promoting.
+**Validated end-to-end on sandbox (2026-06-22):** consent → `Cost Management Reader` + `Storage Blob Data Reader` grants → subscription sync = **CONNECTED** + resource groups; `--with-usage` custom role + instance discovery. `LUMITURE_APP_ID_PROD` is set to the prod SP (`c871cf6f-…`); sandbox/dev uses `--lumiture-app-id 99e6a4c9-…`.
+
+**⚠️ KNOWN GAP — billing DATA does not flow yet.** This script does the customer-side **grants + a Cost Management export**, but LumiTure's `transfer_azure_billing_data` reads from **LumiTure's own blob** (`AZURE_LUMITURE_CONTAINER`, authed with the LumiTure SP) at `{tenant}/{subscription}/{YYYYMM}/daily-actual-cost/` — **not** the customer storage this script creates. Getting data there requires wiring the export to LumiTure's **event trigger** (`GET /platforms/azure/authorization/event-trigger-url/` → `AZURE_BILLING_EVENT_TRIGGER_URL`), which this script does **not** do yet. So today the flow reaches `CONNECTED` (subscription/RG sync, usage), but **billing cost data won't land** until the event-trigger step is added (TBD — needs the prod ingestion mechanism documented). Tracked in `backend/tech-debt.md`.
 
 ## License
 
