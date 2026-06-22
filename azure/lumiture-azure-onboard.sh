@@ -36,6 +36,12 @@
 #   --lumiture-app-id   <GUID>          default: prod LumiTure multi-tenant SP app id
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt      <token>         provide to auto-submit; omit to finish in the wizard
+#   --event-trigger-url <url>           LumiTure billing event-trigger URL (the Azure Function
+#                                       webhook). Required for billing DATA to flow. If omitted,
+#                                       fetched from the API when --lumiture-api + --lumiture-jwt
+#                                       are given. Env-specific (NOT a public constant).
+#   --event-sub-name    <name>          Event Grid subscription name (default: lumiture-billing-export)
+#   --skip-event-subscription           do not create the Event Grid subscription
 #   --discover-only     run discovery + report only; no grants, no export, no submit
 #   --skip-export       do the grants but do not create the Cost Management export
 #   --dry-run           print commands without executing
@@ -84,6 +90,9 @@ CONTAINER="billing-exports"
 EXPORT_NAME="lumiture-daily-actual-cost"
 WITH_FOCUS=0
 WITH_USAGE=0
+EVENT_TRIGGER_URL=""
+EVENT_SUB_NAME="lumiture-billing-export"
+SKIP_EVENT_SUBSCRIPTION=0
 LUMITURE_APP_ID=""
 LUMITURE_API=""
 LUMITURE_JWT=""
@@ -102,6 +111,9 @@ while [[ $# -gt 0 ]]; do
     --export-name) EXPORT_NAME="$2"; shift 2 ;;
     --with-focus) WITH_FOCUS=1; shift ;;
     --with-usage) WITH_USAGE=1; shift ;;
+    --event-trigger-url) EVENT_TRIGGER_URL="$2"; shift 2 ;;
+    --event-sub-name) EVENT_SUB_NAME="$2"; shift 2 ;;
+    --skip-event-subscription) SKIP_EVENT_SUBSCRIPTION=1; shift ;;
     --lumiture-app-id) LUMITURE_APP_ID="$2"; shift 2 ;;
     --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
     --lumiture-jwt) LUMITURE_JWT="$2"; shift 2 ;;
@@ -289,10 +301,8 @@ create_export() {
     --schedule-status Active \
     -o none; then
     ok "Export '${name}' created (first Azure run lands in ~24h)"
-    warn "  NOTE: billing DATA does not reach LumiTure from this export alone. LumiTure"
-    warn "  ingests from its OWN blob via an event trigger — the export must be wired to"
-    warn "  AZURE_BILLING_EVENT_TRIGGER_URL (GET /platforms/azure/authorization/event-trigger-url/)."
-    warn "  That step is NOT automated here yet — see azure/README.md 'Known gap'."
+    log "  NOTE: the export alone doesn't deliver data — LumiTure ingests from its own blob"
+    log "  via the event trigger. Phase 2.7 wires that (needs --event-trigger-url or a JWT)."
   else
     warn "Export '${name}' create failed — see the az error above. (FOCUS export may need a newer az / portal step.)"
   fi
@@ -352,6 +362,57 @@ JSON
     sleep 15
   done
   warn "Usage role assignment did not succeed after retries — re-run, or assign '${role_name}' to the SP in the portal."
+}
+
+# -----------------------------------------------------------------------------
+# Phase 2.7 — Event Grid subscription (billing DATA path)
+# The customer-side export lands in the customer's storage; LumiTure ingests it
+# into its OWN blob via an Azure Function (AZURE_BILLING_EVENT_TRIGGER_URL). That
+# function is invoked by an Event Grid subscription on the storage account that
+# fires on BlobCreated → webhook. WITHOUT this, billing cost data never reaches
+# LumiTure. Params mirror the in-product wizard's "SetUp Data Access — Step 2".
+# -----------------------------------------------------------------------------
+
+resolve_event_trigger_url() {
+  [[ -n "${EVENT_TRIGGER_URL}" ]] && { printf '%s' "${EVENT_TRIGGER_URL}"; return 0; }
+  # Fetch from the LumiTure API if we have a token (env-specific Function URL).
+  if [[ -n "${LUMITURE_API}" && -n "${LUMITURE_JWT}" ]]; then
+    curl -s -H "Authorization: Bearer ${LUMITURE_JWT}" \
+      "${LUMITURE_API}/platforms/azure/authorization/event-trigger-url/" \
+      | jq -r '.data.url // empty' 2>/dev/null
+  fi
+}
+
+setup_event_subscription() {
+  local url
+  url=$(resolve_event_trigger_url)
+  if [[ -z "${url}" ]]; then
+    warn "Phase 2.7 — no event-trigger URL (pass --event-trigger-url, or --lumiture-api + --lumiture-jwt to fetch it)."
+    warn "  Skipping the Event Grid subscription — billing DATA will NOT flow until it's created."
+    return 0
+  fi
+
+  # Provider registration is async — MUST complete before event-subscription create,
+  # or the create fails with "Microsoft.EventGrid is not registered". --wait blocks
+  # until Registered (no-op/fast if already registered).
+  log "Phase 2.7 — Registering Microsoft.EventGrid provider (waiting for completion, can take ~1-2 min)…"
+  run az provider register --namespace Microsoft.EventGrid --wait -o none
+
+  log "Phase 2.7 — Creating Event Grid subscription '${EVENT_SUB_NAME}' (BlobCreated → LumiTure webhook) on ${STORAGE_ACCOUNT}…"
+  if run az eventgrid event-subscription create \
+      --name "${EVENT_SUB_NAME}" \
+      --source-resource-id "${STORAGE_ACCOUNT_ID}" \
+      --included-event-types Microsoft.Storage.BlobCreated \
+      --endpoint-type webhook \
+      --endpoint "${url}" \
+      -o none; then
+    ok "Event subscription created → billing data flows to LumiTure on the next export run"
+  else
+    warn "Event subscription create failed — see the az error above."
+    warn "  The endpoint must be reachable and pass Event Grid's validation handshake."
+    warn "  (It will NOT validate against a placeholder URL such as sandbox's"
+    warn "  placeholder-sandbox.azurewebsites.net — use a real env: dev/staging/prod.)"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -426,6 +487,8 @@ main() {
   if [[ "${SKIP_EXPORT}" -eq 0 ]]; then
     create_export "${EXPORT_NAME}" "ActualCost" "daily-actual-cost"
     [[ "${WITH_FOCUS}" -eq 1 ]] && create_export "lumiture-daily-focus-cost" "FocusCost" "daily-focus-cost"
+    # The export only matters if its blobs reach LumiTure — wire the Event Grid subscription.
+    [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]] && setup_event_subscription
   else
     log "--skip-export set — grants applied, no Cost Management export created"
   fi

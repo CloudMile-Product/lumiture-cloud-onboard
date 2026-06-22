@@ -47,11 +47,12 @@ Zero install on the customer's machine. Auth stays in the customer's Azure ident
 
 > **Billing vs usage are separable.** Billing (cost) is the core flow; usage (rightsizing) is opt-in via `--with-usage` because it grants a broader, compute+metrics read role. Run with `--with-usage` for full FinOps.
 
-## ✅ Validated / ⚠️ Known gap
+## ✅ Validated end-to-end on sandbox (2026-06-22)
 
-**Validated end-to-end on sandbox (2026-06-22):** consent → `Cost Management Reader` + `Storage Blob Data Reader` grants → subscription sync = **CONNECTED** + resource groups; `--with-usage` custom role + instance discovery. `LUMITURE_APP_ID_PROD` is set to the prod SP (`c871cf6f-…`); sandbox/dev uses `--lumiture-app-id 99e6a4c9-…`.
+consent → `Cost Management Reader` + `Storage Blob Data Reader` grants → subscription sync = **CONNECTED** + resource groups; `--with-usage` custom role + instance discovery; **Phase 2.7 Event Grid subscription** created + validated against a real LumiTure billing-event function (`provisioningState=Succeeded`). `LUMITURE_APP_ID_PROD` is the prod SP (`c871cf6f-…`); sandbox/dev uses `--lumiture-app-id 99e6a4c9-…`.
 
-**⚠️ KNOWN GAP — billing DATA does not flow yet.** This script does the customer-side **grants + a Cost Management export**, but LumiTure's `transfer_azure_billing_data` reads from **LumiTure's own blob** (`AZURE_LUMITURE_CONTAINER`, authed with the LumiTure SP) at `{tenant}/{subscription}/{YYYYMM}/daily-actual-cost/` — **not** the customer storage this script creates. Getting data there requires wiring the export to LumiTure's **event trigger** (`GET /platforms/azure/authorization/event-trigger-url/` → `AZURE_BILLING_EVENT_TRIGGER_URL`), which this script does **not** do yet. So today the flow reaches `CONNECTED` (subscription/RG sync, usage), but **billing cost data won't land** until the event-trigger step is added (TBD — needs the prod ingestion mechanism documented). Tracked in `backend/tech-debt.md`.
+### Billing DATA path — now wired (was a known gap, closed 2026-06-22)
+`transfer_azure_billing_data` reads from **LumiTure's own blob** (`AZURE_LUMITURE_CONTAINER`, authed with the LumiTure SP) at `{tenant}/{subscription}/{YYYYMM}/daily-actual-cost/` — not the customer storage. Data reaches it via LumiTure's **event trigger** (an Azure Function, `AZURE_BILLING_EVENT_TRIGGER_URL`): the customer's storage fires `BlobCreated` → Event Grid webhook → the function ingests into LumiTure's blob. **Phase 2.7 of this script now creates that Event Grid subscription** (pass `--event-trigger-url`, or `--lumiture-api` + `--lumiture-jwt` to fetch it). The endpoint must be a real function (it answers Event Grid's validation handshake) — a placeholder URL fails. Cost data lands once the export's first daily run completes (~24h).
 
 ## License
 
