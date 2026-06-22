@@ -24,6 +24,10 @@
 #
 # Optional:
 #   --grant-scope            project|dataset             default: dataset (tighter)
+#   --with-usage             also grant roles/monitoring.viewer on the scoping project
+#                            (usage/rightsizing metrics) + optional usage submit
+#   --scoping-project        <project-id>                scoping project for usage metrics
+#                                                        (default: --export-project)
 #   --lumiture-sa            <email>                     default: prod SA (lumiture-client@tw-rd-app-finops-prod...)
 #   --lumiture-api           <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt           <token>                     provide to auto-submit; omit to finish in the wizard
@@ -42,6 +46,9 @@ set -euo pipefail
 readonly LUMITURE_SA_PROD="lumiture-client@tw-rd-app-finops-prod.iam.gserviceaccount.com"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
 readonly REQUIRED_ROLE="roles/bigquery.dataViewer"
+# Usage/rightsizing: LumiTure reads Cloud Monitoring metrics (CPU utilization etc.)
+# from a scoping project — needs roles/monitoring.viewer there.
+readonly USAGE_ROLE="roles/monitoring.viewer"
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -63,6 +70,8 @@ EXPORT_PROJECT_ID=""
 DETAILED_USAGE_DATASET=""
 PRICING_DATASET=""
 GRANT_SCOPE="dataset"
+WITH_USAGE=0
+SCOPING_PROJECT_ID=""
 LUMITURE_SA=""
 LUMITURE_API=""
 LUMITURE_JWT=""
@@ -76,6 +85,8 @@ while [[ $# -gt 0 ]]; do
     --detailed-usage-dataset) DETAILED_USAGE_DATASET="$2"; shift 2 ;;
     --pricing-dataset) PRICING_DATASET="$2"; shift 2 ;;
     --grant-scope) GRANT_SCOPE="$2"; shift 2 ;;
+    --with-usage) WITH_USAGE=1; shift ;;
+    --scoping-project) SCOPING_PROJECT_ID="$2"; shift 2 ;;
     --lumiture-sa) LUMITURE_SA="$2"; shift 2 ;;
     --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
     --lumiture-jwt) LUMITURE_JWT="$2"; shift 2 ;;
@@ -373,6 +384,48 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Phase 4 — Usage / rightsizing (opt-in: --with-usage)
+# Usage data is Cloud Monitoring metrics (CPU utilization etc.), NOT the
+# "Detailed Usage Cost" billing export. LumiTure reads them from a scoping
+# project, so the SA needs roles/monitoring.viewer there. Then the in-product
+# usage step (POST /platforms/gcp/usage/integration) registers the scoping project.
+# -----------------------------------------------------------------------------
+
+grant_usage_monitoring() {
+  local scoping="${SCOPING_PROJECT_ID:-${EXPORT_PROJECT_ID}}"
+  [[ -n "${scoping}" ]] || die "--with-usage needs a scoping project (--scoping-project or --export-project)"
+
+  log "Phase 4 — Granting ${USAGE_ROLE} on SCOPING PROJECT ${scoping} to ${LUMITURE_SA} (usage metrics)…"
+  run gcloud projects add-iam-policy-binding "${scoping}" \
+    --member="serviceAccount:${LUMITURE_SA}" \
+    --role="${USAGE_ROLE}" \
+    --condition=None \
+    --quiet
+  ok "Monitoring-viewer grant applied on scoping project ${scoping}"
+
+  log "Phase 4 — Usage form value: scoping_project_id = ${scoping}"
+
+  # Optional auto-submit of the usage integration (parallels billing submit).
+  [[ -n "${LUMITURE_API}" && -n "${LUMITURE_JWT}" ]] || { ok "Grant done. Enter scoping_project_id='${scoping}' in the LumiTure usage step to finish."; return 0; }
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    log "DRY-RUN: would POST ${LUMITURE_API}/platforms/gcp/usage/integration"
+    return 0
+  fi
+  local http_status
+  http_status=$(curl -s -o /tmp/lumiture-usage-submit.out -w '%{http_code}' \
+    -X POST "${LUMITURE_API}/platforms/gcp/usage/integration" \
+    -H "Authorization: Bearer ${LUMITURE_JWT}" \
+    -H "Content-Type: application/json" \
+    -d "{\"scoping_project_id\": \"${scoping}\"}")
+  if [[ "${http_status}" -ge 200 && "${http_status}" -lt 300 ]]; then
+    ok "LumiTure usage integration created (HTTP ${http_status})"
+  else
+    warn "Usage submit returned HTTP ${http_status} — finish in the wizard with scoping_project_id='${scoping}'"
+    cat /tmp/lumiture-usage-submit.out >&2
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Main flow
 # -----------------------------------------------------------------------------
 
@@ -405,6 +458,7 @@ main() {
 
   emit_form_values
   submit_to_lumiture
+  [[ "${WITH_USAGE}" -eq 1 ]] && grant_usage_monitoring
   ok "GCP onboarding complete"
 }
 

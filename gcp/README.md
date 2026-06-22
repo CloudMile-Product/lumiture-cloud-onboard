@@ -24,9 +24,12 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 1. Discovers the customer's Cloud Billing Account and BigQuery export dataset
 2. Validates the export is producing data
 3. Grants `BigQuery Data Viewer` on the export datasets **and** `Billing Account Viewer` (`roles/billing.viewer`) on the billing account to LumiTure's read-only service account — both required by LumiTure's integration validation
-4. Prints the form values to paste into the LumiTure wizard
+4. **(opt-in `--with-usage`)** Grants `roles/monitoring.viewer` on the **scoping project** (default `--export-project`, override with `--scoping-project`) for usage/rightsizing metrics, then optionally registers it via `/platforms/gcp/usage/integration`. This is the Cloud **Monitoring** path — distinct from the "Detailed Usage Cost" *billing* dataset, which is just cost data.
+5. Prints the form values to paste into the LumiTure wizard
 
 Zero install on the customer's machine. Auth stays in the customer's Google identity. LumiTure never sees the customer's credentials.
+
+> **Billing vs usage** (same split as the Azure flow): billing (cost) is the core flow; usage (rightsizing, Monitoring metrics) is opt-in via `--with-usage`. ⚠️ Don't confuse GCP's *"Detailed Usage Cost"* (a billing export dataset) with *usage/rightsizing* — the script's `--detailed-usage-dataset` is billing; `--with-usage` is metrics.
 
 ## License
 
