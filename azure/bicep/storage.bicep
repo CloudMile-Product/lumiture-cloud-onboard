@@ -3,8 +3,8 @@
 @description('Globally-unique storage account name (3-24 lowercase chars).')
 param storageAccountName string
 
-@description('Blob container for exports.')
-param containerName string = 'billing-exports'
+@description('Blob container for exports. Must match the LumiTure copy-function (reads container "billing-export").')
+param containerName string = 'billing-export'
 
 @description('Region.')
 param location string = 'eastasia'

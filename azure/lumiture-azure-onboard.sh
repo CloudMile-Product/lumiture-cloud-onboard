@@ -27,8 +27,8 @@
 # Optional:
 #   --tenant-id         <GUID>          default: tenant of the active `az` login
 #   --location          <region>        default: eastasia (used only when creating resources)
-#   --container         <name>          default: billing-exports
-#   --export-name       <name>          default: lumiture-daily-actual-cost
+#   --container         <name>          default: billing-export
+#   --export-name       <name>          default: daily-actual-cost
 #   --with-focus                        also create a FOCUS-format export (daily-focus-cost)
 #   --with-usage                        also create+assign the usage custom role (VM + Monitor
 #                                       metrics read) for rightsizing/usage data — billing alone
@@ -86,8 +86,8 @@ TENANT_ID=""
 STORAGE_ACCOUNT=""
 STORAGE_RG=""
 LOCATION="eastasia"
-CONTAINER="billing-exports"
-EXPORT_NAME="lumiture-daily-actual-cost"
+CONTAINER="billing-export"
+EXPORT_NAME="daily-actual-cost"
 WITH_FOCUS=0
 WITH_USAGE=0
 EVENT_TRIGGER_URL=""
@@ -276,8 +276,12 @@ validate_grants() {
 
 # -----------------------------------------------------------------------------
 # Phase 2.5 — Cost Management export(s)
-# LumiTure's pipeline reads {tenant_id}/{subscription_id}/{YYYYMM}/daily-actual-cost/
-# (and daily-focus-cost/ for FOCUS). We root the export at <tenant>/<subscription>.
+# Hard contract with LumiTure's billing-event copy-function: it reads the customer
+# export from container "billing-export" under the fixed prefixes cost/daily-actual-cost/
+# (and cost/daily-focus-cost/ for FOCUS). So we root the export at "cost" and name each
+# export after its subdir (daily-actual-cost / daily-focus-cost) — the export name forms
+# the path segment after the rootFolder. (The {tenant}/{sub}/{YYYYMM} layout is the
+# LumiTure-side blob path the *transfer* command reads, NOT the customer export path.)
 # -----------------------------------------------------------------------------
 
 create_export() {
@@ -287,14 +291,14 @@ create_export() {
   local from_date to_date
   from_date=$(date -u -d '+1 day' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+1d +%Y-%m-%dT00:00:00Z)
   to_date=$(date -u -d '+5 years' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+5y +%Y-%m-%dT00:00:00Z)
-  log "Phase 2.5 — Creating ${export_type} export '${name}' → ${STORAGE_ACCOUNT}/${CONTAINER}/${TENANT_ID}/${SUBSCRIPTION_ID}/${subdir} (daily ${from_date}…${to_date})…"
+  log "Phase 2.5 — Creating ${export_type} export '${name}' → ${STORAGE_ACCOUNT}/${CONTAINER}/cost/${name} (daily ${from_date}…${to_date})…"
   if run az costmanagement export create \
     --name "${name}" \
     --type "${export_type}" \
     --scope "subscriptions/${SUBSCRIPTION_ID}" \
     --storage-account-id "${STORAGE_ACCOUNT_ID}" \
     --storage-container "${CONTAINER}" \
-    --storage-directory "${TENANT_ID}/${SUBSCRIPTION_ID}/${subdir}" \
+    --storage-directory "cost" \
     --timeframe MonthToDate \
     --recurrence Daily \
     --recurrence-period from="${from_date}" to="${to_date}" \
@@ -486,7 +490,7 @@ main() {
 
   if [[ "${SKIP_EXPORT}" -eq 0 ]]; then
     create_export "${EXPORT_NAME}" "ActualCost" "daily-actual-cost"
-    [[ "${WITH_FOCUS}" -eq 1 ]] && create_export "lumiture-daily-focus-cost" "FocusCost" "daily-focus-cost"
+    [[ "${WITH_FOCUS}" -eq 1 ]] && create_export "daily-focus-cost" "FocusCost" "daily-focus-cost"
     # The export only matters if its blobs reach LumiTure — wire the Event Grid subscription.
     [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]] && setup_event_subscription
   else

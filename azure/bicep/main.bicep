@@ -27,14 +27,14 @@ param storageResourceGroup string
 @description('Globally-unique storage account name for the cost export (3-24 lowercase chars).')
 param storageAccountName string
 
-@description('Blob container for exports.')
-param containerName string = 'billing-exports'
+@description('Blob container for exports. Must match the LumiTure copy-function (reads container "billing-export").')
+param containerName string = 'billing-export'
 
 @description('Region for created resources.')
 param location string = 'eastasia'
 
-@description('Cost Management export name.')
-param exportName string = 'lumiture-daily-actual-cost'
+@description('Cost Management export name. Forms the path segment under rootFolder; the copy-function reads cost/daily-actual-cost/.')
+param exportName string = 'daily-actual-cost'
 
 // Built-in role definition IDs (stable across tenants)
 var costManagementReaderRoleId = '72fafb9e-0641-4937-9268-a91bfd8191a3' // Cost Management Reader
@@ -94,7 +94,7 @@ resource export 'Microsoft.CostManagement/exports@2023-08-01' = {
       destination: {
         resourceId: storage.outputs.storageAccountId
         container: containerName
-        rootFolderPath: '${subscription().tenantId}/${subscription().subscriptionId}/daily-actual-cost'
+        rootFolderPath: 'cost'
       }
     }
     definition: {
