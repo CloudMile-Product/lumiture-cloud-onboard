@@ -84,9 +84,9 @@ bash onboard-wrapper.sh "${SUBSCRIPTION_ID}" "${STORAGE_ACCOUNT}" "${STORAGE_RG}
 
 What the script does:
 1. Confirms LumiTure's SP is consented (Step 1)
-2. Ensures the storage account + `billing-exports` container exist
+2. Ensures the storage account + `billing-export` container exist
 3. Grants `Cost Management Reader` on the subscription and `Storage Blob Data Reader` on the storage account to LumiTure's SP
-4. Creates a daily **ActualCost** export rooted at `<tenant>/<subscription>/daily-actual-cost/`
+4. Creates a daily **ActualCost** export rooted at `cost/daily-actual-cost/`
 5. Prints the JSON form values
 
 You'll see ✅ checkmarks as each step succeeds.
@@ -100,7 +100,7 @@ The script prints:
   "tenant_id": "...",
   "subscription_id": "...",
   "storage_account": "...",
-  "container": "billing-exports"
+  "container": "billing-export"
 }
 ```
 
@@ -125,7 +125,7 @@ Nothing was installed on your computer. To revoke later:
 # remove the role grants
 az role assignment delete --assignee "${LUMITURE_APP_ID}" --scope "/subscriptions/${SUBSCRIPTION_ID}"
 # delete the export
-az costmanagement export delete --name lumiture-daily-actual-cost --scope "subscriptions/${SUBSCRIPTION_ID}"
+az costmanagement export delete --name daily-actual-cost --scope "subscriptions/${SUBSCRIPTION_ID}"
 ```
 
 ---
