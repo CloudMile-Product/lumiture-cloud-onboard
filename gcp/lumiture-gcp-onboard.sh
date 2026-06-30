@@ -250,7 +250,7 @@ validate_freshness() {
 
 # Pricing export is delivered via a BigQuery Data Transfer config that can be
 # silently created in a DISABLED state (Console authorization step skipped).
-# Detect that case and give the operator the exact fix. Learned 2026-06-01.
+# Detect that case and give the operator the exact fix.
 diagnose_pricing_transfer() {
   local cfg
   cfg=$(bq ls --transfer_config --transfer_location=us --project_id="${EXPORT_PROJECT_ID}" --format=json 2>/dev/null \

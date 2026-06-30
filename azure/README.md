@@ -40,18 +40,15 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 1. Ensures a storage account + container exist for the Cost Management export
 2. Grants `Cost Management Reader` (subscription) and `Storage Blob Data Reader` (storage account) to LumiTure's SP
 3. Creates a daily `ActualCost` export (optionally a FOCUS export with `--with-focus`)
-4. **(opt-in `--with-usage`)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Billing alone doesn't need it; Cost Management Reader doesn't cover Monitor metrics. Mirrors the backend's `get_usage_custom_role`; validated by the `usage-check` endpoint (which lists VMs).
+4. **(opt-in `--with-usage`)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Billing alone doesn't need it; Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs.
 5. Prints the form values to enter in the LumiTure wizard
 
 Zero install on the customer's machine. Auth stays in the customer's Azure identity. LumiTure never sees the customer's credentials.
 
 > **Billing vs usage are separable.** Billing (cost) is the core flow; usage (rightsizing) is opt-in via `--with-usage` because it grants a broader, compute+metrics read role. Run with `--with-usage` for full FinOps.
 
-## ✅ Validated end-to-end on sandbox (2026-06-22)
+## Billing data path
 
-consent → `Cost Management Reader` + `Storage Blob Data Reader` grants → subscription sync = **CONNECTED** + resource groups; `--with-usage` custom role + instance discovery; **Phase 2.7 Event Grid subscription** created + validated against a real LumiTure billing-event function (`provisioningState=Succeeded`). `LUMITURE_APP_ID_PROD` is the prod SP (`c871cf6f-…`); sandbox/dev uses `--lumiture-app-id 99e6a4c9-…`.
-
-### Billing DATA path — now wired (was a known gap, closed 2026-06-22)
 Cost data flows to LumiTure via an **event trigger**, not by LumiTure reading your storage directly: your storage fires `BlobCreated` → Event Grid webhook → LumiTure ingests the export into its own managed storage. **Phase 2.7 of this script creates that Event Grid subscription** (pass `--event-trigger-url`, or `--lumiture-api` + `--lumiture-jwt` to fetch it). The endpoint must be a real function (it answers Event Grid's validation handshake) — a placeholder URL fails. Cost data lands once the export's first daily run completes (~24h).
 
 ## License

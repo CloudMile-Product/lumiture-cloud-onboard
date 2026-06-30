@@ -57,9 +57,8 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 
 # LumiTure's PROD Azure multi-tenant SP App (client) ID — public by design (it's
-# AZURE_LUMITURE_SP_CLIENT_ID in .env.prod, also the Microsoft sign-in client id;
-# shown in the in-product wizard). NOT a secret. Override with --lumiture-app-id
-# for non-prod (sandbox/dev uses 99e6a4c9-8c5b-4481-bd9b-522cd30ec3c3).
+# also the Microsoft sign-in client id, shown in the in-product wizard). NOT a
+# secret. Override with --lumiture-app-id for non-production environments.
 readonly LUMITURE_APP_ID_PROD="c871cf6f-dd8d-487a-a908-a66245655b0e"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
 readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-data-integration/azure"
@@ -413,8 +412,8 @@ setup_event_subscription() {
   else
     warn "Event subscription create failed — see the az error above."
     warn "  The endpoint must be reachable and pass Event Grid's validation handshake."
-    warn "  (It will NOT validate against a placeholder URL such as sandbox's"
-    warn "  placeholder-sandbox.azurewebsites.net — use a real env: dev/staging/prod.)"
+    warn "  (It will NOT validate against a placeholder URL — pass the real"
+    warn "  event-trigger URL provided by LumiTure.)"
   fi
 }
 

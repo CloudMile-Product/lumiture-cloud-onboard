@@ -35,7 +35,7 @@ Zero install on the customer's machine. Auth stays in the customer's Google iden
 > ```bash
 > ./lumiture-gcp-onboard.sh --skip-billing \
 >   --scoping-project <project-id> \
->   --lumiture-sa <env-SA-email>          # dev SA for sandbox, prod SA (default) for prod
+>   --lumiture-sa <SA-email>              # prod SA is the default; pass yours if different
 > ```
 
 ## License

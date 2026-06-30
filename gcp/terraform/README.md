@@ -47,8 +47,7 @@ See `examples/basic/` for a complete minimal example.
 
 - Cloud Billing export to BigQuery must be **enabled in the GCP Console
   before running this module** — Google Cloud does not expose this as an API
-  (verified 2026-05-29 against
-  <https://cloud.google.com/billing/docs/how-to/export-data-bigquery-setup>).
+  (see <https://cloud.google.com/billing/docs/how-to/export-data-bigquery-setup>).
   The module's freshness check will fail fast if export data is missing.
 - The principal running `terraform apply` needs:
   - `roles/bigquery.dataOwner` on the export datasets (for `dataset` grant scope), OR
