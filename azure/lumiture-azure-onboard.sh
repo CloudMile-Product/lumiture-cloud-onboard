@@ -315,10 +315,9 @@ create_export() {
 # -----------------------------------------------------------------------------
 # Phase 2.6 — Usage custom role (opt-in: --with-usage)
 # Usage/rightsizing data needs the SP to read VMs + Azure Monitor metrics, which
-# Cost Management Reader does NOT cover. LumiTure defines a custom role for this
-# (backend: AzureAuthorizationService.get_usage_custom_role); we create + assign it.
-# The role name is cosmetic for the customer; the LumiTure usage-check validates by
-# listing VMs, so what matters is the action set below matching the backend.
+# Cost Management Reader does NOT cover. We create + assign a custom role for this.
+# The role name is cosmetic; the LumiTure usage-check validates by listing VMs, so
+# what matters is the action set below covering VM read + Monitor metrics read.
 # -----------------------------------------------------------------------------
 
 grant_usage_role() {
@@ -371,7 +370,7 @@ JSON
 # -----------------------------------------------------------------------------
 # Phase 2.7 — Event Grid subscription (billing DATA path)
 # The customer-side export lands in the customer's storage; LumiTure ingests it
-# into its OWN blob via an Azure Function (AZURE_BILLING_EVENT_TRIGGER_URL). That
+# into its own managed storage via an Azure Function (the event-trigger URL). That
 # function is invoked by an Event Grid subscription on the storage account that
 # fires on BlobCreated → webhook. WITHOUT this, billing cost data never reaches
 # LumiTure. Params mirror the in-product wizard's "SetUp Data Access — Step 2".

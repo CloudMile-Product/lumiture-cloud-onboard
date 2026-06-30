@@ -22,10 +22,6 @@ Each cloud's grant is structurally different (GCP IAM on a BQ dataset; Azure adm
 
 **What is shared** is the *packaging and contract*, not the execution: a consistent variable/output shape per cloud, and a parallel same-shaped onboarding flow.
 
-## Design decision
-
-The per-cloud-surfaces rationale is recorded as an ADR in the LumiTure specs repo: `infra/decisions/0001-per-cloud-onboarding-surfaces.md`.
-
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

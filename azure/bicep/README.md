@@ -36,5 +36,5 @@ az deployment sub create \
 ## Notes
 
 - Built-in role GUIDs are stable across tenants: Cost Management Reader `72fafb9e-0641-4937-9268-a91bfd8191a3`, Storage Blob Data Reader `2a2b9908-6ea1-4ae2-8e65-a410df84e7d1`.
-- The export `rootFolderPath` (`cost`) + export name (`daily-actual-cost`) must line up with what LumiTure's billing-event copy-function reads (container `billing-export`, prefix `cost/daily-actual-cost/`) before `transfer_azure_billing_data` can pick it up — verify against `backend/platforms/azure.md` before promoting out of POC.
+- The export `rootFolderPath` (`cost`) + export name (`daily-actual-cost`) must line up with what LumiTure's billing-event ingestion reads: container `billing-export`, prefix `cost/daily-actual-cost/`. Keep these values in sync with the shell defaults before promoting out of POC.
 - `recurrencePeriod.from` is set to 2026-06-23; adjust if deploying later (must be a future date at deploy time).
