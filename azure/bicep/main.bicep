@@ -36,6 +36,9 @@ param location string = 'eastasia'
 @description('Cost Management export name. Forms the path segment under rootFolder; the copy-function reads cost/daily-actual-cost/.')
 param exportName string = 'daily-actual-cost'
 
+@description('Recurrence start for the export schedule. Azure requires this to be in the future at deploy time, so it defaults to one day out (utcNow() is only valid as a param default). Do not hardcode a literal — a fixed date eventually fails validation.')
+param exportFromDate string = dateTimeAdd(utcNow(), 'P1D')
+
 // Built-in role definition IDs (stable across tenants)
 var costManagementReaderRoleId = '72fafb9e-0641-4937-9268-a91bfd8191a3' // Cost Management Reader
 var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
@@ -85,7 +88,7 @@ resource export 'Microsoft.CostManagement/exports@2023-08-01' = {
       status: 'Active'
       recurrence: 'Daily'
       recurrencePeriod: {
-        from: '2026-06-23T00:00:00Z'
+        from: exportFromDate
         to: '2030-12-31T00:00:00Z'
       }
     }
