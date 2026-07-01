@@ -284,30 +284,35 @@ validate_grants() {
 # -----------------------------------------------------------------------------
 
 create_export() {
-  local name="$1" export_type="$2" subdir="$3"
-  # az costmanagement export create REQUIRES --recurrence-period when --recurrence is set,
-  # and the start date must be in the future. GNU date (Cloud Shell) first, BSD/macOS fallback.
+  local name="$1" export_type="$2"   # $3 (legacy subdir) unused: rootFolderPath is "cost", the name forms the subdir
+  # Schedule start must be in the future. GNU date (Cloud Shell) first, BSD/macOS fallback.
   local from_date to_date
   from_date=$(date -u -d '+1 day' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+1d +%Y-%m-%dT00:00:00Z)
   to_date=$(date -u -d '+5 years' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+5y +%Y-%m-%dT00:00:00Z)
+
+  # Create via the ARM REST API, not the `az costmanagement` extension: the extension
+  # prompts to self-install and rejects FOCUS (only Usage/ActualCost/AmortizedCost).
+  # FOCUS is accepted only on 2023-07-01-preview (all stable versions reject it, and
+  # reject a dataVersion property); ActualCost/AmortizedCost use the stable 2023-11-01.
+  local api_version dataset
+  if [[ "${export_type}" == "FocusCost" ]]; then
+    api_version="2023-07-01-preview"
+    dataset='"granularity": "Daily", "configuration": { "dataVersion": "1.0" }'
+  else
+    api_version="2023-11-01"
+    dataset='"granularity": "Daily"'
+  fi
+
   log "Phase 2.5 — Creating ${export_type} export '${name}' → ${STORAGE_ACCOUNT}/${CONTAINER}/cost/${name} (daily ${from_date}…${to_date})…"
-  if run az costmanagement export create \
-    --name "${name}" \
-    --type "${export_type}" \
-    --scope "subscriptions/${SUBSCRIPTION_ID}" \
-    --storage-account-id "${STORAGE_ACCOUNT_ID}" \
-    --storage-container "${CONTAINER}" \
-    --storage-directory "cost" \
-    --timeframe MonthToDate \
-    --recurrence Daily \
-    --recurrence-period from="${from_date}" to="${to_date}" \
-    --schedule-status Active \
-    -o none; then
+  local url body
+  url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}?api-version=${api_version}"
+  body="{\"properties\":{\"schedule\":{\"status\":\"Active\",\"recurrence\":\"Daily\",\"recurrencePeriod\":{\"from\":\"${from_date}\",\"to\":\"${to_date}\"}},\"format\":\"Csv\",\"deliveryInfo\":{\"destination\":{\"resourceId\":\"${STORAGE_ACCOUNT_ID}\",\"container\":\"${CONTAINER}\",\"rootFolderPath\":\"cost\"}},\"definition\":{\"type\":\"${export_type}\",\"timeframe\":\"MonthToDate\",\"dataSet\":{${dataset}}}}}"
+  if run az rest --method PUT --url "${url}" --headers "Content-Type=application/json" --body "${body}" -o none; then
     ok "Export '${name}' created (first Azure run lands in ~24h)"
     log "  NOTE: the export alone doesn't deliver data — LumiTure ingests from its own blob"
     log "  via the event trigger. Phase 2.7 wires that (needs --event-trigger-url or a JWT)."
   else
-    warn "Export '${name}' create failed — see the az error above. (FOCUS export may need a newer az / portal step.)"
+    warn "Export '${name}' create failed — see the az error above."
   fi
 }
 
