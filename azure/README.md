@@ -39,13 +39,13 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 0. **Pre-flight:** confirms LumiTure's multi-tenant SP is consented in the tenant (browser step done first in the LumiTure wizard). Fails fast with instructions if not.
 1. Ensures a storage account + container exist for the Cost Management export
 2. Grants `Cost Management Reader` (subscription) and `Storage Blob Data Reader` (storage account) to LumiTure's SP
-3. Creates a daily `ActualCost` export (optionally a FOCUS export with `--with-focus`)
-4. **(opt-in `--with-usage`)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Billing alone doesn't need it; Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs.
-5. Prints the form values to enter in the LumiTure wizard
+3. Creates a daily `ActualCost` export **and** (default) a FOCUS-format export — `--no-focus` to skip
+4. **(default)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs. Pass `--no-usage` for a minimal billing-only grant.
+5. Prints the form values to enter in the LumiTure wizard (or auto-registers when run with a session token)
 
 Zero install on the customer's machine. Auth stays in the customer's Azure identity. LumiTure never sees the customer's credentials.
 
-> **Billing vs usage are separable.** Billing (cost) is the core flow; usage (rightsizing) is opt-in via `--with-usage` because it grants a broader, compute+metrics read role. Run with `--with-usage` for full FinOps.
+> **Full FinOps by default.** The script grants the broader compute+metrics read role and creates the FOCUS export out of the box, so cost *and* rightsizing work immediately. For a **least-privilege, billing-only** onboarding, run with `--no-usage` (and `--no-focus`): you'll get just `Cost Management Reader` + `Storage Blob Data Reader` + the ActualCost export.
 
 ## Billing data path
 
