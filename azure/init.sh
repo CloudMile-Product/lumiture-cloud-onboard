@@ -65,7 +65,7 @@ set -euo pipefail
 # secret. Override with --lumiture-app-id for non-production environments.
 readonly LUMITURE_APP_ID_PROD="c871cf6f-dd8d-487a-a908-a66245655b0e"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
-readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-data-integration/azure"
+readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-integration/azure"
 readonly ROLE_COST_READER="Cost Management Reader"
 readonly ROLE_BLOB_READER="Storage Blob Data Reader"
 
