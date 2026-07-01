@@ -14,9 +14,15 @@ You'll:
 3. Grant LumiTure read-only access (Cost Management Reader + Storage Blob Data Reader)
 4. Create the daily cost export and get the values to enter in LumiTure's wizard
 
-## Step 0 — Get this repo into Cloud Shell
+## Step 0 — Open Cloud Shell and get this repo
 
-Azure Cloud Shell already has `az`, `jq`, and `git`, and you're logged in automatically. Clone this repo:
+Open Azure Cloud Shell from the portal (the `>_` icon, top bar) or <https://portal.azure.com/#cloudshell/>.
+
+**First launch?** In the *Getting started* pane, choose **"No storage account required"** (ephemeral session), leave **"Use existing private virtual network"** *unchecked*, pick **Bash**, and click **Apply**. This onboarding is a one-shot run and keeps nothing in the shell's home directory, so you don't need to create a storage account or configure a virtual network just to use Cloud Shell. (Ticking the private-VNet box is what triggers the extra "virtual network settings" dialog — skip it.)
+
+> ⚠️ Don't confuse this with the export storage account. The Cloud Shell prompt above is only for the shell's own scratch space — skip it. The storage account that *receives your cost export* is a separate one the script creates for you in Step 3.
+
+Cloud Shell already has `az`, `jq`, and `git`, and you're logged in automatically. Clone this repo:
 
 ```bash
 git clone https://github.com/CloudMile-Product/lumiture-cloud-onboard.git && cd lumiture-cloud-onboard/azure
