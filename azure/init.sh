@@ -17,7 +17,7 @@
 # This mirrors the GCP script's "enable billing export = Console-only" gate.
 #
 # Usage:
-#   lumiture-azure-onboard.sh [options]
+#   init.sh [options]
 #
 # Required (or interactive prompt):
 #   --subscription-id   <GUID>          Azure subscription to onboard

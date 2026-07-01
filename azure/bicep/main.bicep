@@ -2,7 +2,7 @@
 //
 // Declarative alternative to the bash / Cloud Shell flow. Grants the LumiTure
 // service principal the two read roles and creates the daily cost export.
-// Same end state as lumiture-azure-onboard.sh.
+// Same end state as init.sh.
 //
 // PREREQUISITE (browser, un-scriptable): LumiTure's multi-tenant SP must already
 // be consented in this tenant (done via the LumiTure "Connect Azure" wizard).

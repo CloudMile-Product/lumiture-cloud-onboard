@@ -29,7 +29,7 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 |---|---|
 | `tutorial.md` | Step-by-step Cloud Shell walkthrough |
 | `onboard-wrapper.sh` | Interactive bash wrapper the customer runs |
-| `lumiture-azure-onboard.sh` | Underlying script (consent check + RBAC grants + cost export + form-value output) |
+| `init.sh` | Underlying script (consent check + RBAC grants + cost export + form-value output) |
 | `bicep/` | Bicep module — declarative alternative (same role grants + export). See `bicep/README.md`. |
 
 **Two ways to run the grant:** the **bash / Cloud Shell** flow (zero-install, customer-driven) or the **Bicep module** in `bicep/` (for teams that prefer IaC). Both grant the same two roles + create the export, and emit the same wizard form values.

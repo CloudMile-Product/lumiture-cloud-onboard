@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LumiTure Azure Onboarding — Cloud Shell wrapper
 #
-# Thin wrapper around lumiture-azure-onboard.sh for Azure Cloud Shell.
+# Thin wrapper around init.sh for Azure Cloud Shell.
 #
 # Usage:
 #   bash onboard-wrapper.sh [SUBSCRIPTION_ID] [STORAGE_ACCOUNT] [STORAGE_RG] [LUMITURE_APP_ID]
@@ -39,7 +39,7 @@ LUMITURE_APP_ID="${4:-}"
 
 # ── Locate the underlying onboard script ─────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ONBOARD="${SCRIPT_DIR}/lumiture-azure-onboard.sh"
+ONBOARD="${SCRIPT_DIR}/init.sh"
 [[ -x "${ONBOARD}" ]] || die "Could not find ${ONBOARD} (or not executable). Make sure you cloned the full repo."
 
 # ── Auto-detect the subscription when not given ──────────────────
