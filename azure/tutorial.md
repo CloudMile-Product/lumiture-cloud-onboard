@@ -78,7 +78,7 @@ bash onboard-wrapper.sh <SUBSCRIPTION_ID> [STORAGE_ACCOUNT] [RESOURCE_GROUP]
 
 What the script does:
 1. Confirms LumiTure's SP is consented (Step 1)
-2. Ensures the storage account + `billing-export` container exist
+2. Ensures the storage account + `billing-export` container exist, with a 180-day lifecycle rule that auto-deletes old export blobs (keeps storage cost flat; `--no-retention` to skip)
 3. Grants `Cost Management Reader` + `Storage Blob Data Reader`, plus (default) the `LumiTure FinOps Reader` role for usage/rightsizing data — pass `--no-usage` for a minimal billing-only grant
 4. Creates a daily **ActualCost** export (plus a **FOCUS** export by default; `--no-focus` to skip) rooted at `cost/`, **and** wires the Event Grid subscription that streams new export blobs to LumiTure (the data path)
 5. Registers the connection with LumiTure automatically when launched from the wizard, or prints the JSON form values for you to paste in otherwise

@@ -37,7 +37,7 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 ## What it does
 
 0. **Pre-flight:** confirms LumiTure's multi-tenant SP is consented in the tenant (browser step done first in the LumiTure wizard). Fails fast with instructions if not.
-1. Ensures a storage account + container exist for the Cost Management export
+1. Ensures a storage account + container exist for the Cost Management export, and sets a lifecycle rule that auto-deletes export blobs older than **180 days** (`--export-retention-days <n>` to tune, `--no-retention` to skip) — the daily exports never de-duplicate, so this keeps storage cost flat
 2. Grants `Cost Management Reader` (subscription) and `Storage Blob Data Reader` (storage account) to LumiTure's SP
 3. Creates a daily `ActualCost` export **and** (default) a FOCUS-format export — `--no-focus` to skip
 4. **(default)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs. Pass `--no-usage` for a minimal billing-only grant.
