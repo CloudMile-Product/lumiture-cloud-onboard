@@ -29,10 +29,11 @@
 #   --location          <region>        default: eastasia (used only when creating resources)
 #   --container         <name>          default: billing-export
 #   --export-name       <name>          default: daily-actual-cost
-#   --with-focus                        also create a FOCUS-format export (daily-focus-cost)
-#   --with-usage                        also create+assign the usage custom role (VM + Monitor
-#                                       metrics read) for rightsizing/usage data — billing alone
-#                                       does not need it; opt in for full FinOps
+#   --with-focus                        create a FOCUS-format export (daily-focus-cost) — ON by default
+#   --no-focus                          skip the FOCUS export (billing/ActualCost only)
+#   --with-usage                        create+assign the usage custom role (VM + Monitor metrics
+#                                       read) for rightsizing/usage data — ON by default (full FinOps)
+#   --no-usage                          skip the usage role (minimal, billing-only grant)
 #   --lumiture-app-id   <GUID>          default: prod LumiTure multi-tenant SP app id
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt      <token>         provide to auto-submit; omit to finish in the wizard
@@ -87,8 +88,8 @@ STORAGE_RG=""
 LOCATION="eastasia"
 CONTAINER="billing-export"
 EXPORT_NAME="daily-actual-cost"
-WITH_FOCUS=0
-WITH_USAGE=0
+WITH_FOCUS=1
+WITH_USAGE=1
 EVENT_TRIGGER_URL=""
 EVENT_SUB_NAME="lumiture-billing-export"
 SKIP_EVENT_SUBSCRIPTION=0
@@ -109,7 +110,9 @@ while [[ $# -gt 0 ]]; do
     --container) CONTAINER="$2"; shift 2 ;;
     --export-name) EXPORT_NAME="$2"; shift 2 ;;
     --with-focus) WITH_FOCUS=1; shift ;;
+    --no-focus) WITH_FOCUS=0; shift ;;
     --with-usage) WITH_USAGE=1; shift ;;
+    --no-usage) WITH_USAGE=0; shift ;;
     --event-trigger-url) EVENT_TRIGGER_URL="$2"; shift 2 ;;
     --event-sub-name) EVENT_SUB_NAME="$2"; shift 2 ;;
     --skip-event-subscription) SKIP_EVENT_SUBSCRIPTION=1; shift ;;

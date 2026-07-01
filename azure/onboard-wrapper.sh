@@ -20,8 +20,8 @@
 #                  form values for you to paste into the wizard (and, without an
 #                  event-trigger URL, warns that billing data won't flow yet).
 #   LUMITURE_API   API base override (default https://api.lumiture.ai)
-#   WITH_USAGE=1   also grant the usage/rightsizing role
-#   WITH_FOCUS=1   also create a FOCUS-format export
+#   WITH_USAGE=0   skip the usage/rightsizing role (default: granted — full FinOps)
+#   WITH_FOCUS=0   skip the FOCUS-format export (default: created)
 
 set -euo pipefail
 
@@ -76,8 +76,9 @@ echo ""
 log "This will:"
 echo "    1. Verify LumiTure's service principal is consented in your tenant"
 echo "    2. Ensure the storage account + container for the cost export exist"
-echo "    3. Grant 'Cost Management Reader' (subscription) + 'Storage Blob Data Reader' (storage)"
-echo "    4. Create a daily Cost Management export + wire the Event Grid subscription"
+echo "    3. Grant 'Cost Management Reader' + 'Storage Blob Data Reader', and (default)"
+echo "       the 'LumiTure FinOps Reader' role for usage/rightsizing — set WITH_USAGE=0 to skip"
+echo "    4. Create the daily ActualCost export + (default) a FOCUS export, and wire Event Grid"
 if [[ -n "${LUMITURE_JWT}" ]]; then
   echo "    5. Register the connection with LumiTure automatically (no manual form entry)"
 else
@@ -101,8 +102,9 @@ ARGS=( --subscription-id "${SUBSCRIPTION_ID}"
 [[ -n "${LUMITURE_APP_ID}" ]] && ARGS+=( --lumiture-app-id "${LUMITURE_APP_ID}" )
 [[ -n "${LUMITURE_API}" ]]    && ARGS+=( --lumiture-api "${LUMITURE_API}" )
 [[ -n "${LUMITURE_JWT}" ]]    && ARGS+=( --lumiture-jwt "${LUMITURE_JWT}" )
-[[ "${WITH_USAGE:-0}" == "1" ]] && ARGS+=( --with-usage )
-[[ "${WITH_FOCUS:-0}" == "1" ]] && ARGS+=( --with-focus )
+# Usage role + FOCUS export are on by default (full FinOps); env opt-out.
+[[ "${WITH_USAGE:-1}" == "0" ]] && ARGS+=( --no-usage )
+[[ "${WITH_FOCUS:-1}" == "0" ]] && ARGS+=( --no-focus )
 
 "${ONBOARD}" "${ARGS[@]}"
 
