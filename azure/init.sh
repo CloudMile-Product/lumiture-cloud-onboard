@@ -68,7 +68,6 @@ set -euo pipefail
 # secret. Override with --lumiture-app-id for non-production environments.
 readonly LUMITURE_APP_ID_PROD="c871cf6f-dd8d-487a-a908-a66245655b0e"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
-readonly EVENT_TRIGGER_URL_PROD="https://lumiture-billing-event-prod-g9gnhncuasdhgzc9.eastus-01.azurewebsites.net/api/billing_event_trigger"
 readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-data-integration/azure"
 readonly ROLE_COST_READER="Cost Management Reader"
 readonly ROLE_BLOB_READER="Storage Blob Data Reader"
@@ -160,7 +159,6 @@ fi
 # Defaults target LumiTure production; override with --lumiture-app-id / --lumiture-api if needed.
 [[ -n "${LUMITURE_APP_ID}" ]] || LUMITURE_APP_ID="${LUMITURE_APP_ID_PROD}"
 [[ -n "${LUMITURE_API}" ]] || LUMITURE_API="${LUMITURE_API_PROD}"
-[[ -n "${EVENT_TRIGGER_URL}" ]] || EVENT_TRIGGER_URL="${EVENT_TRIGGER_URL_PROD}"
 
 # Auto-detect the subscription (when exactly one is enabled) and default the export
 # storage, so a bare `--env <env>` run needs no other input. Explicit flags win; pass
