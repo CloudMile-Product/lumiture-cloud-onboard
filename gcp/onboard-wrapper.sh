@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LumiTure GCP Onboarding — Cloud Shell wrapper
 #
-# Thin interactive wrapper around scripts/lumiture-gcp-onboard.sh,
+# Thin interactive wrapper around init.sh,
 # designed for use inside Cloud Shell's tutorial walkthrough.
 #
 # Usage:
@@ -28,7 +28,7 @@ PRICING_DATASET="$4"
 # In Cloud Shell, this repo is cloned to ~/cloudshell_open by default;
 # adjust if your tutorial set cloudshell_workspace differently.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ONBOARD="${SCRIPT_DIR}/lumiture-gcp-onboard.sh"
+ONBOARD="${SCRIPT_DIR}/init.sh"
 
 [[ -x "${ONBOARD}" ]] || die "Could not find ${ONBOARD} (or not executable). Make sure you cloned the full repo."
 

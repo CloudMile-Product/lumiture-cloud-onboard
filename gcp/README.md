@@ -14,7 +14,7 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 |---|---|
 | `tutorial.md` | Step-by-step walkthrough Cloud Shell renders in a side panel |
 | `onboard-wrapper.sh` | Interactive bash wrapper the customer runs in the tutorial |
-| `lumiture-gcp-onboard.sh` | Underlying onboarding script (discovery + IAM grant + form-value output) |
+| `init.sh` | Underlying onboarding script (discovery + IAM grant + form-value output) |
 | `terraform/` | Terraform module — declarative alternative to the bash flow (same IAM grant + optional auto-submit). See `terraform/README.md` and `terraform/examples/`. |
 
 **Two ways to run the grant:** the **bash / Cloud Shell** flow above (zero-install, customer-driven) or the **Terraform module** in `terraform/` (for teams that prefer IaC / repeatable applies). Both grant the same two roles and emit the same wizard form values.
@@ -33,7 +33,7 @@ Zero install on the customer's machine. Auth stays in the customer's Google iden
 >
 > **Already billing-onboarded and just need usage?** Use **`--skip-billing`** (usage-only): it skips all billing discovery/grants and does only the `monitoring.viewer` grant + optional usage submit. Implies `--with-usage`; requires `--scoping-project`; needs neither `bq` nor ADC. Example:
 > ```bash
-> ./lumiture-gcp-onboard.sh --skip-billing \
+> ./init.sh --skip-billing \
 >   --scoping-project <project-id> \
 >   --lumiture-sa <SA-email>              # prod SA is the default; pass yours if different
 > ```

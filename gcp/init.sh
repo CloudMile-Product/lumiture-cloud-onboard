@@ -14,7 +14,7 @@
 # This script pre-flight checks and fails fast if export is not detected.
 #
 # Usage:
-#   lumiture-gcp-onboard.sh [options]
+#   init.sh [options]
 #
 # Required (or interactive prompt):
 #   --billing-account-id     <NNNNNN-NNNNNN-NNNNNN>     Cloud Billing Account ID
