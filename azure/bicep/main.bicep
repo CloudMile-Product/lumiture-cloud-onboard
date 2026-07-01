@@ -36,6 +36,9 @@ param location string = 'eastasia'
 @description('Cost Management export name. Forms the path segment under rootFolder; the copy-function reads cost/daily-actual-cost/.')
 param exportName string = 'daily-actual-cost'
 
+@description('Auto-delete export blobs older than this many days (0 disables). Keeps the client storage cost flat since the daily exports never de-duplicate.')
+param exportRetentionDays int = 180
+
 @description('Recurrence start for the export schedule. Azure requires this to be in the future at deploy time, so it defaults to one day out (utcNow() is only valid as a param default). Do not hardcode a literal — a fixed date eventually fails validation.')
 param exportFromDate string = dateTimeAdd(utcNow(), 'P1D')
 
@@ -61,6 +64,7 @@ module storage 'storage.bicep' = {
     storageAccountName: storageAccountName
     containerName: containerName
     location: location
+    retentionDays: exportRetentionDays
   }
 }
 

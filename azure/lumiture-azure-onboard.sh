@@ -29,6 +29,9 @@
 #   --location          <region>        default: eastasia (used only when creating resources)
 #   --container         <name>          default: billing-export
 #   --export-name       <name>          default: daily-actual-cost
+#   --export-retention-days <n>         auto-delete export blobs older than n days (default 180,
+#                                       keeps storage cost flat + bounds blob accumulation)
+#   --no-retention                      do not set the lifecycle rule (keep every export blob)
 #   --with-focus                        create a FOCUS-format export (daily-focus-cost) — ON by default
 #   --no-focus                          skip the FOCUS export (billing/ActualCost only)
 #   --with-usage                        create+assign the usage custom role (VM + Monitor metrics
@@ -88,6 +91,7 @@ STORAGE_RG=""
 LOCATION="eastasia"
 CONTAINER="billing-export"
 EXPORT_NAME="daily-actual-cost"
+RETENTION_DAYS=180
 WITH_FOCUS=1
 WITH_USAGE=1
 EVENT_TRIGGER_URL=""
@@ -109,6 +113,8 @@ while [[ $# -gt 0 ]]; do
     --location) LOCATION="$2"; shift 2 ;;
     --container) CONTAINER="$2"; shift 2 ;;
     --export-name) EXPORT_NAME="$2"; shift 2 ;;
+    --export-retention-days) RETENTION_DAYS="$2"; shift 2 ;;
+    --no-retention) RETENTION_DAYS=0; shift ;;
     --with-focus) WITH_FOCUS=1; shift ;;
     --no-focus) WITH_FOCUS=0; shift ;;
     --with-usage) WITH_USAGE=1; shift ;;
@@ -231,6 +237,21 @@ ensure_storage() {
   run az storage container create --name "${CONTAINER}" \
     --account-name "${STORAGE_ACCOUNT}" --auth-mode login -o none
   ok "Container ${CONTAINER} ready"
+
+  # Lifecycle rule: the exports never de-duplicate (each daily run drops a fresh
+  # full-month cumulative CSV), so the container would grow unbounded. LumiTure's
+  # function copies each blob on creation, so the customer-side copy is only a
+  # landing zone — auto-delete blobs older than RETENTION_DAYS to keep cost flat.
+  if [[ "${RETENTION_DAYS}" -gt 0 ]]; then
+    log "Phase 1 — Setting a ${RETENTION_DAYS}-day lifecycle rule on ${CONTAINER}/cost (auto-delete old export blobs)…"
+    local policy
+    policy="{\"rules\":[{\"enabled\":true,\"name\":\"lumiture-export-retention\",\"type\":\"Lifecycle\",\"definition\":{\"filters\":{\"blobTypes\":[\"blockBlob\"],\"prefixMatch\":[\"${CONTAINER}/cost/\"]},\"actions\":{\"baseBlob\":{\"delete\":{\"daysAfterModificationGreaterThan\":${RETENTION_DAYS}}}}}}]}"
+    if run az storage account management-policy create --account-name "${STORAGE_ACCOUNT}" -g "${STORAGE_RG}" --policy "${policy}" -o none; then
+      ok "Lifecycle rule applied (export blobs deleted after ${RETENTION_DAYS} days)"
+    else
+      warn "Could not set the lifecycle rule — see the az error above (non-fatal; storage still works)."
+    fi
+  fi
 
   log "Phase 1 — Registering Microsoft.CostManagementExports provider…"
   run az provider register --namespace Microsoft.CostManagementExports -o none
