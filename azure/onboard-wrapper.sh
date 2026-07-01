@@ -20,8 +20,6 @@
 #                  form values for you to paste into the wizard (and, without an
 #                  event-trigger URL, warns that billing data won't flow yet).
 #   LUMITURE_API   API base override (default https://api.lumiture.ai)
-#   ENV            INTERNAL env preset: dev|staging|sandbox|prod (default prod) — sets the
-#                  LumiTure app-id + event-trigger URL for that environment
 #   WITH_USAGE=0   skip the usage/rightsizing role (default: granted — full FinOps)
 #   WITH_FOCUS=0   skip the FOCUS-format export (default: created)
 
@@ -104,7 +102,6 @@ ARGS=( --subscription-id "${SUBSCRIPTION_ID}"
 [[ -n "${LUMITURE_APP_ID}" ]] && ARGS+=( --lumiture-app-id "${LUMITURE_APP_ID}" )
 [[ -n "${LUMITURE_API}" ]]    && ARGS+=( --lumiture-api "${LUMITURE_API}" )
 [[ -n "${LUMITURE_JWT}" ]]    && ARGS+=( --lumiture-jwt "${LUMITURE_JWT}" )
-[[ -n "${ENV:-}" ]]           && ARGS+=( --env "${ENV}" )
 # Usage role + FOCUS export are on by default (full FinOps); env opt-out.
 [[ "${WITH_USAGE:-1}" == "0" ]] && ARGS+=( --no-usage )
 [[ "${WITH_FOCUS:-1}" == "0" ]] && ARGS+=( --no-focus )

@@ -37,9 +37,6 @@
 #   --with-usage                        create+assign the usage custom role (VM + Monitor metrics
 #                                       read) for rightsizing/usage data — ON by default (full FinOps)
 #   --no-usage                          skip the usage role (minimal, billing-only grant)
-#   --env               <name>          INTERNAL preset: dev|staging|sandbox|prod (default prod).
-#                                       Sets the LumiTure app-id + event-trigger URL for that env
-#                                       so you don't pass --lumiture-app-id / --event-trigger-url.
 #   --lumiture-app-id   <GUID>          default: prod LumiTure multi-tenant SP app id
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt      <token>         provide to auto-submit; omit to finish in the wizard
@@ -103,7 +100,6 @@ SKIP_EVENT_SUBSCRIPTION=0
 LUMITURE_APP_ID=""
 LUMITURE_API=""
 LUMITURE_JWT=""
-ENV=""
 DISCOVER_ONLY=0
 SKIP_EXPORT=0
 DRY_RUN=0
@@ -129,7 +125,6 @@ while [[ $# -gt 0 ]]; do
     --lumiture-app-id) LUMITURE_APP_ID="$2"; shift 2 ;;
     --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
     --lumiture-jwt) LUMITURE_JWT="$2"; shift 2 ;;
-    --env) ENV="$2"; shift 2 ;;
     --discover-only) DISCOVER_ONLY=1; shift ;;
     --skip-export) SKIP_EXPORT=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -139,44 +134,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --env resolves the LumiTure app-id + event-trigger URL for a non-prod environment
-# (INTERNAL testing convenience; prod is the default and needs no --env). Explicit
-# --lumiture-app-id / --event-trigger-url still win. NOTE: these fn hostnames carry an
-# immutable per-app hash — if a fn app is recreated, refresh the URL below.
-if [[ -n "${ENV}" && "${ENV}" != "prod" ]]; then
-  case "${ENV}" in
-    dev)     env_url="https://lumiture-billing-event-dev-ece2fabqggceg9c4.eastus-01.azurewebsites.net/api/billing_event_trigger" ;;
-    staging) env_url="https://lumiture-billing-event-staging-cmhtatcvh8e4hwfp.eastus-01.azurewebsites.net/api/billing_event_trigger" ;;
-    sandbox) env_url="https://lumiture-billing-event-sandbox.azurewebsites.net/api/billing_event_trigger" ;;
-    *) die "Unknown --env '${ENV}' — valid: prod, dev, staging, sandbox" ;;
-  esac
-  # dev/staging/sandbox share the 'LumiTure Dev' multi-tenant SP; prod uses its own.
-  [[ -n "${LUMITURE_APP_ID}" ]] || LUMITURE_APP_ID="99e6a4c9-8c5b-4481-bd9b-522cd30ec3c3"
-  [[ -n "${EVENT_TRIGGER_URL}" ]] || EVENT_TRIGGER_URL="${env_url}"
-  log "Using --env ${ENV}: app-id ${LUMITURE_APP_ID}, event-trigger ${env_url}"
-fi
-
 # Defaults target LumiTure production; override with --lumiture-app-id / --lumiture-api if needed.
 [[ -n "${LUMITURE_APP_ID}" ]] || LUMITURE_APP_ID="${LUMITURE_APP_ID_PROD}"
 [[ -n "${LUMITURE_API}" ]] || LUMITURE_API="${LUMITURE_API_PROD}"
-
-# Auto-detect the subscription (when exactly one is enabled) and default the export
-# storage, so a bare `--env <env>` run needs no other input. Explicit flags win; pass
-# --storage-account to reuse an existing account instead of the generated default.
-if [[ -z "${SUBSCRIPTION_ID}" ]]; then
-  mapfile -t _subs < <(az account list --query "[?state=='Enabled'].id" -o tsv 2>/dev/null)
-  if [[ "${#_subs[@]}" -eq 1 ]]; then
-    SUBSCRIPTION_ID="${_subs[0]}"; log "Auto-detected subscription: ${SUBSCRIPTION_ID}"
-  elif [[ "${#_subs[@]}" -eq 0 ]]; then
-    die "No enabled subscriptions found — run 'az login' first."
-  else
-    err "Multiple subscriptions — pass --subscription-id <id>:"
-    az account list --query "[?state=='Enabled'].{name:name, id:id}" -o table >&2
-    exit 1
-  fi
-fi
-STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-ltexp$(printf '%s' "${SUBSCRIPTION_ID}" | tr -d '-' | cut -c1-15)}"
-STORAGE_RG="${STORAGE_RG:-lumiture-billing-rg}"
 
 # -----------------------------------------------------------------------------
 # Run helper — respects --dry-run
