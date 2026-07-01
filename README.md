@@ -9,7 +9,7 @@ This repo holds **one sibling flow per cloud**. They share a consistent shape (a
 | Cloud | Folder | Native surface | Customer grant | IaC | Status |
 |---|---|---|---|---|---|
 | **GCP** | [`gcp/`](gcp/) | Google Cloud Shell ([badge](gcp/README.md#try-it)) | IAM on existing BQ export | Terraform | ✅ Live |
-| **Azure** | [`azure/`](azure/) | Azure Cloud Shell + browser admin-consent | Admin-consent + Cost Management Reader + Storage Blob Data Reader | Bicep | 🧪 POC |
+| **Azure** | [`azure/`](azure/) | Azure Cloud Shell + browser admin-consent | Admin-consent + Cost Management Reader + Storage Blob Data Reader | Bicep | ✅ Live |
 | **AWS** | — | CloudFormation Launch-Stack / AWS CloudShell | Cross-account IAM role (+ ExternalId) | CloudFormation | ⬜ Planned |
 
 Start with the per-cloud README:

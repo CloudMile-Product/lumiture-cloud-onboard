@@ -65,7 +65,7 @@ set -euo pipefail
 # secret. Override with --lumiture-app-id for non-production environments.
 readonly LUMITURE_APP_ID_PROD="c871cf6f-dd8d-487a-a908-a66245655b0e"
 readonly LUMITURE_API_PROD="https://api.lumiture.ai"
-readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-data-integration/azure"
+readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-integration/azure"
 readonly ROLE_COST_READER="Cost Management Reader"
 readonly ROLE_BLOB_READER="Storage Blob Data Reader"
 
@@ -177,6 +177,11 @@ preflight() {
   log "Setting active subscription to ${SUBSCRIPTION_ID}…"
   run az account set --subscription "${SUBSCRIPTION_ID}"
   ok "Subscription set: ${SUBSCRIPTION_ID}"
+
+  # Default the export destination from the subscription (POC parity) so bare `./init.sh` works;
+  # pass --storage-account / --storage-rg to override.
+  STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-ltexp$(printf '%s' "${SUBSCRIPTION_ID}" | tr -d '-' | cut -c1-15)}"
+  STORAGE_RG="${STORAGE_RG:-lumiture-billing-rg}"
 
   [[ "${LUMITURE_APP_ID}" != "REPLACE_WITH_LUMITURE_AZURE_APP_ID" ]] \
     || die "LumiTure App ID is unset — pass --lumiture-app-id <GUID> (shown in the LumiTure Azure wizard) or set LUMITURE_APP_ID_PROD in this script"

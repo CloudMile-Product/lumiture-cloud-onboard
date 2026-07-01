@@ -115,5 +115,5 @@ if [[ -n "${LUMITURE_JWT}" ]]; then
   echo "the export's first daily run lands (~24h) and is transferred to BigQuery."
 else
   ok "Grants + export done. Enter the JSON values above into the LumiTure wizard:"
-  echo "    👉 https://app.lumiture.ai/authorization/billing-data-integration/azure"
+  echo "    👉 https://app.lumiture.ai/authorization/billing-integration/azure"
 fi
