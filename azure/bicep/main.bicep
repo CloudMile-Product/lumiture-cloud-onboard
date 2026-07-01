@@ -39,6 +39,12 @@ param exportName string = 'daily-actual-cost'
 @description('Recurrence start for the export schedule. Azure requires this to be in the future at deploy time, so it defaults to one day out (utcNow() is only valid as a param default). Do not hardcode a literal — a fixed date eventually fails validation.')
 param exportFromDate string = dateTimeAdd(utcNow(), 'P1D')
 
+@description('LumiTure billing event-trigger webhook URL (env-specific — from the wizard/API). This wires the data path (Event Grid BlobCreated → LumiTure). Leave empty to skip it, but billing data will NOT flow until the Event Grid subscription exists.')
+param eventTriggerUrl string = ''
+
+@description('Event Grid subscription name.')
+param eventSubscriptionName string = 'lumiture-billing-export'
+
 // Built-in role definition IDs (stable across tenants)
 var costManagementReaderRoleId = '72fafb9e-0641-4937-9268-a91bfd8191a3' // Cost Management Reader
 var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
@@ -110,6 +116,21 @@ resource export 'Microsoft.CostManagement/exports@2023-08-01' = {
   }
 }
 
+// Phase 2.7 — Event Grid subscription (billing DATA path). Only wired when an
+// event-trigger URL is supplied; without it the export is created but data won't flow.
+module eventGrid 'eventgrid.bicep' = if (!empty(eventTriggerUrl)) {
+  name: 'lumiture-eventgrid'
+  scope: rg
+  params: {
+    storageAccountName: storageAccountName
+    eventTriggerUrl: eventTriggerUrl
+    eventSubscriptionName: eventSubscriptionName
+    location: location
+  }
+  dependsOn: [ storage, export ]
+}
+
 output storageAccountId string = storage.outputs.storageAccountId
 output tenantId string = subscription().tenantId
 output subscriptionId string = subscription().subscriptionId
+output eventSubscriptionWired bool = !empty(eventTriggerUrl)

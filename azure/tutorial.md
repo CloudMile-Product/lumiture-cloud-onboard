@@ -56,25 +56,7 @@ az ad sp show --id "${LUMITURE_APP_ID}" --query "{name:displayName, objectId:id}
 
 If you see a name + objectId, consent succeeded. Click **Next**.
 
-## Step 2 — Pick your subscription
-
-```bash
-az account list --query "[].{name:name, id:id, state:state}" -o table
-read -p "Subscription ID to onboard: " SUBSCRIPTION_ID
-az account set --subscription "${SUBSCRIPTION_ID}"
-echo "Active subscription: ${SUBSCRIPTION_ID}"
-```
-
-## Step 3 — Choose a storage account for the cost export
-
-Azure delivers Cost Management exports to a blob storage account. Pick a name (lowercase, 3–24 chars, globally unique) and a resource group — the script creates them if they don't exist.
-
-```bash
-read -p "Storage account name (e.g. lumitureexport$RANDOM): " STORAGE_ACCOUNT
-read -p "Resource group for it (e.g. lumiture-billing-rg): " STORAGE_RG
-```
-
-## Step 4 — Run the grant + export
+## Step 2 — Run it
 
 Review what the script will do first:
 
@@ -82,24 +64,32 @@ Review what the script will do first:
 cat onboard-wrapper.sh
 ```
 
-Then run it:
+Then run it. If you opened this from the LumiTure wizard, your session token is already set, so a bare run does everything — no values to type:
 
 ```bash
-bash onboard-wrapper.sh "${SUBSCRIPTION_ID}" "${STORAGE_ACCOUNT}" "${STORAGE_RG}" "${LUMITURE_APP_ID}"
+bash onboard-wrapper.sh
+```
+
+The wrapper **auto-detects** your subscription (when you have exactly one) and picks a default export storage account + resource group, creating them if needed. To target a specific subscription or storage account, pass them explicitly:
+
+```bash
+bash onboard-wrapper.sh <SUBSCRIPTION_ID> [STORAGE_ACCOUNT] [RESOURCE_GROUP]
 ```
 
 What the script does:
 1. Confirms LumiTure's SP is consented (Step 1)
 2. Ensures the storage account + `billing-export` container exist
 3. Grants `Cost Management Reader` on the subscription and `Storage Blob Data Reader` on the storage account to LumiTure's SP
-4. Creates a daily **ActualCost** export rooted at `cost/daily-actual-cost/`
-5. Prints the JSON form values
+4. Creates a daily **ActualCost** export rooted at `cost/daily-actual-cost/` **and** wires the Event Grid subscription that streams new export blobs to LumiTure (the data path)
+5. Registers the connection with LumiTure automatically when launched from the wizard, or prints the JSON form values for you to paste in otherwise
 
 You'll see ✅ checkmarks as each step succeeds.
 
-## Step 5 — Finish in LumiTure
+> **Not launched from the wizard?** The data path (step 4's Event Grid subscription) and auto-registration (step 5) need your LumiTure session token. Either open this flow from the LumiTure Azure wizard (which sets it for you) or `export LUMITURE_JWT=<your session token>` before running. Without it the grants + export are still created, but billing data won't flow until the connection is finished in the wizard.
 
-The script prints:
+## Step 3 — Finish in LumiTure
+
+If you ran with your session token (launched from the wizard), the connection is already registered — skip to Step 4. Otherwise the script prints:
 
 ```json
 {
@@ -116,7 +106,7 @@ Open the LumiTure Azure wizard:
 
 Enter the values and submit. The subscription status moves to `IN_PROGRESS`, then `CONNECTED` once LumiTure's subscription sync runs.
 
-## Step 6 — When does data appear?
+## Step 4 — When does data appear?
 
 - **Connection** (CONNECTED): once the subscription sync runs after submit.
 - **Cost data**: Azure's first daily export run lands within ~24h, then LumiTure transfers blob → BigQuery on its schedule. Rows also restate over ~30 days as Azure finalizes cost.

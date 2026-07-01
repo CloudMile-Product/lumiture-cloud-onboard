@@ -4,6 +4,7 @@ Declarative alternative to the bash / Cloud Shell flow. Same end state:
 - `Cost Management Reader` → LumiTure SP on the subscription
 - `Storage Blob Data Reader` → LumiTure SP on the export storage account
 - a daily `ActualCost` Cost Management export → that storage account
+- an Event Grid subscription (BlobCreated → LumiTure webhook) so the export blobs actually reach LumiTure — the **data path** (wired only when `eventTriggerUrl` is supplied)
 
 ## Prerequisite (un-scriptable)
 
@@ -22,16 +23,20 @@ az deployment sub create \
   --parameters \
       lumitureSpObjectId=<sp-object-id> \
       storageResourceGroup=lumiture-billing-rg \
-      storageAccountName=lumitureexport$RANDOM
+      storageAccountName=lumitureexport$RANDOM \
+      eventTriggerUrl=<LumiTure billing event-trigger URL>
 ```
+
+`eventTriggerUrl` is env-specific (get it from the LumiTure Azure wizard/API). Omit it and the deploy still creates the grants + export, but **billing data won't flow** until the Event Grid subscription exists — `az bicep`'s `eventSubscriptionWired` output tells you which happened.
 
 ## Files
 
 | File | Scope | Purpose |
 |---|---|---|
-| `main.bicep` | subscription | RG + storage module + Cost Management Reader + export |
+| `main.bicep` | subscription | RG + storage module + Cost Management Reader + export + Event Grid |
 | `storage.bicep` | resource group | storage account + container |
 | `role-storage.bicep` | resource group | Storage Blob Data Reader on the storage account |
+| `eventgrid.bicep` | resource group | Event Grid system topic + BlobCreated → LumiTure webhook (data path) |
 
 ## Notes
 
