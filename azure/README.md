@@ -16,6 +16,8 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
 
 ## Try it
 
+> ⚠️ **First time on this tenant? Do the one-time admin consent _before_ running anything.** LumiTure reads your data through a multi-tenant service principal that must be **consented into your tenant once** — a Microsoft **browser** step that cannot be scripted. In the LumiTure app: **Authorization → Connect Azure** → sign in as a **tenant admin** → **Accept**. Until the SP is consented, the script stops at **Phase 0** and applies no grants. Already consented this tenant? Skip it — later subscriptions do not need a new consent. Full steps: [`tutorial.md` → Step 1](tutorial.md).
+
 1. Open **Azure Cloud Shell**: <https://shell.azure.com> (pick **Bash**)
 2. Clone + enter:
    ```bash
