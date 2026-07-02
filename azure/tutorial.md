@@ -106,6 +106,8 @@ Open the LumiTure Azure wizard:
 
 Enter the values and submit. The subscription status moves to `IN_PROGRESS`, then `CONNECTED` once LumiTure's subscription sync runs.
 
+> **Azure portal (zh-TW) field names** — to locate your IDs in the Traditional-Chinese Azure UI: `tenant_id` = **租用戶識別碼** (Tenant ID) · `subscription_id` = **訂用帳戶 ID** (Subscription ID).
+
 ## Step 4 — When does data appear?
 
 - **Connection** (CONNECTED): once the subscription sync runs after submit.
