@@ -1,5 +1,7 @@
 # LumiTure Azure Onboarding — Cloud Shell
 
+> 繁體中文（IT SOP）：[`README.zh-TW.md`](README.zh-TW.md)
+
 > Guided onboarding for [LumiTure](https://app.lumiture.ai): the customer grants LumiTure read-only access to their Azure cost data — in their own Azure identity, zero install. The Azure analog of the [GCP Cloud Shell flow](../gcp/README.md).
 
 ## How the Azure flow differs from GCP

@@ -1,5 +1,7 @@
 # LumiTure GCP Onboarding — Cloud Shell
 
+> 繁體中文（IT SOP）：[`README.zh-TW.md`](README.zh-TW.md)
+
 > Guided **"Open in Cloud Shell"** onboarding for [LumiTure](https://app.lumiture.ai): the customer grants LumiTure read-only access to their GCP billing data — entirely in their own Google identity, zero install. Public so the Cloud Shell URL works without a GitHub auth prompt.
 
 ## Try it

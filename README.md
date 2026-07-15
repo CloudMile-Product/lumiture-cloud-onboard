@@ -1,5 +1,7 @@
 # LumiTure Cloud Onboarding
 
+> 繁體中文（IT SOP）：[`README.zh-TW.md`](README.zh-TW.md)
+
 > Guided, low-install, customer-driven onboarding flows that grant [LumiTure](https://app.lumiture.ai) **read-only** access to a customer's cloud **billing/cost data** — each on that cloud's own native surface, in the customer's own identity. LumiTure never sees the customer's credentials.
 
 This repo holds **one sibling flow per cloud**. They share a consistent shape (a guided entry point + the same "form values" contract the in-product wizard expects) but each runs on its cloud's native surface — we deliberately do **not** couple three credential ceremonies into one apply. See the [decision record](#design-decision).
