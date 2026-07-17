@@ -163,4 +163,4 @@ This walkthrough didn't install anything on your computer. The Cloud Shell sessi
 
 ---
 
-**Issues?** File at <https://github.com/CloudMile-Product/lumiture-cloud-onboard/issues> or contact your LumiTure rep.
+**Issues?** Contact your LumiTure rep.

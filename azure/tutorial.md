@@ -128,4 +128,4 @@ az costmanagement export delete --name daily-actual-cost --scope "subscriptions/
 
 ---
 
-**Issues?** File at <https://github.com/CloudMile-Product/lumiture-cloud-onboard/issues> or contact your LumiTure rep.
+**Issues?** Contact your LumiTure rep.
