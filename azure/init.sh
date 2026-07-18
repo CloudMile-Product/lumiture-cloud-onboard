@@ -68,6 +68,14 @@ readonly LUMITURE_API_PROD="https://api.lumiture.ai"
 readonly LUMITURE_WIZARD_URL="https://app.lumiture.ai/authorization/billing-integration/azure"
 readonly ROLE_COST_READER="Cost Management Reader"
 readonly ROLE_BLOB_READER="Storage Blob Data Reader"
+# Blob Data Contributor (write) — needed by a new-generation export's OWN managed
+# identity when the destination storage disallows shared-key access. See create_export.
+readonly ROLE_BLOB_CONTRIBUTOR="Storage Blob Data Contributor"
+
+# Non-fatal failures accumulate here; the final Phase 4 self-check reports them and
+# exits non-zero, so a partially-broken onboarding never masquerades as complete.
+FAILURES=()
+fail() { FAILURES+=("$1"); err "$1"; }
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -258,9 +266,13 @@ ensure_storage() {
     fi
   fi
 
-  log "Phase 1 — Registering Microsoft.CostManagementExports provider…"
-  run az provider register --namespace Microsoft.CostManagementExports -o none
-  ok "Provider registration requested"
+  # --wait, or the first export create in Phase 2.5 races the async registration and
+  # 503s ("RP registration in progress") — which historically produced a FOCUS-only
+  # onboarding. --wait is a fast no-op once the RP is already registered (the common
+  # case on re-runs), matching how Phase 2.7 handles the EventGrid provider.
+  log "Phase 1 — Registering Microsoft.CostManagementExports provider (waiting for completion, can take ~1-2 min)…"
+  run az provider register --namespace Microsoft.CostManagementExports --wait -o none
+  ok "Provider registered"
 }
 
 # -----------------------------------------------------------------------------
@@ -340,8 +352,55 @@ create_export() {
     ok "Export '${name}' created (first Azure run lands in ~24h)"
     log "  NOTE: the export alone doesn't deliver data — LumiTure ingests from its own blob"
     log "  via the event trigger. Phase 2.7 wires that (needs --event-trigger-url or a JWT)."
+    grant_export_identity "${name}" "${api_version}"
   else
-    warn "Export '${name}' create failed — see the az error above."
+    fail "Export '${name}' create failed — see the az error above."
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Grant a new-generation export's OWN managed identity write access to the storage.
+#
+# Cost Management writes the export blob using the export's identity. When the
+# destination storage allows shared-key access, the export uses the account key,
+# gets identity=null, and needs no grant. When shared-key access is DISABLED
+# (common under CSP / enterprise security policy), Azure attaches a system-assigned
+# managed identity to the export and authenticates with AAD — and that identity
+# needs "Storage Blob Data Contributor" or every run fails, silently, with
+# `AccessToStorageAccountDenied`. init.sh runs as the customer (Owner) here, so it
+# can grant it; LumiTure's own read-only SP cannot. Idempotent.
+# -----------------------------------------------------------------------------
+grant_export_identity() {
+  local name="$1" api_version="$2"
+  [[ "${DRY_RUN}" -eq 1 ]] && { log "  DRY-RUN: would check/grant export '${name}' managed identity"; return 0; }
+
+  local url mi
+  url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}?api-version=${api_version}"
+  mi=$(az rest --method GET --url "${url}" \
+        --query "identity.principalId" -o tsv 2>/dev/null || true)
+
+  if [[ -z "${mi}" || "${mi}" == "None" ]]; then
+    log "  Export '${name}' writes via shared key (no managed identity) — no extra grant needed."
+    return 0
+  fi
+
+  log "  Export '${name}' uses a managed identity (${mi:0:8}…) — storage disallows shared key; granting '${ROLE_BLOB_CONTRIBUTOR}'…"
+  if az role assignment create \
+       --assignee-object-id "${mi}" \
+       --assignee-principal-type ServicePrincipal \
+       --role "${ROLE_BLOB_CONTRIBUTOR}" \
+       --scope "${STORAGE_ACCOUNT_ID}" -o none 2>/dev/null; then
+    ok "  Export '${name}' managed identity granted write on ${STORAGE_ACCOUNT}"
+  else
+    # A prior identical assignment returns non-zero on some az builds; treat an
+    # already-present grant as success, otherwise record a real failure.
+    if az role assignment list --assignee "${mi}" --scope "${STORAGE_ACCOUNT_ID}" \
+         --query "[?roleDefinitionName=='${ROLE_BLOB_CONTRIBUTOR}'] | length(@)" -o tsv 2>/dev/null \
+         | grep -q '^[1-9]'; then
+      ok "  Export '${name}' managed identity already had write on ${STORAGE_ACCOUNT}"
+    else
+      fail "Export '${name}' managed identity could NOT be granted '${ROLE_BLOB_CONTRIBUTOR}' on ${STORAGE_ACCOUNT} — FOCUS/this export will produce no data until it is."
+    fi
   fi
 }
 
@@ -502,6 +561,76 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Phase 4 — Structural self-check (independent read-back)
+#
+# The shell can't confirm DATA at onboarding time — exports are dated +1 day and
+# nothing has run yet. But every failure that leaves an onboarding silently
+# dead is STRUCTURAL and checkable now: a missing export (RP-registration race),
+# an export pointing at the wrong storage (name typo / generation twin), an
+# ungranted export managed identity, or an Event Grid subscription aimed at the
+# wrong endpoint. Read the live state back and record anything wrong into
+# FAILURES so main() can exit non-zero instead of printing a green "complete".
+# -----------------------------------------------------------------------------
+verify_onboarding() {
+  [[ "${SKIP_EXPORT}" -eq 1 ]] && { log "Phase 4 — --skip-export set, nothing to verify."; return 0; }
+  [[ "${DRY_RUN}" -eq 1 ]] && { log "Phase 4 — DRY-RUN, skipping verification."; return 0; }
+  log "Phase 4 — Verifying the onboarding is structurally complete (data still lands ~1 day later)…"
+
+  local exports_json
+  exports_json=$(az rest --method GET \
+    --url "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports?api-version=2023-07-01-preview" \
+    2>/dev/null || echo '{"value":[]}')
+
+  # Required export names → check one exists AND lands on OUR storage account.
+  local required=("daily-actual-cost")
+  [[ "${WITH_FOCUS}" -eq 1 ]] && required+=("daily-focus-cost")
+  local name
+  for name in "${required[@]}"; do
+    local on_ours
+    on_ours=$(printf '%s' "${exports_json}" | jq -r --arg n "${name}" --arg sa "${STORAGE_ACCOUNT}" \
+      '[.value[] | select(.name==$n) | select((.properties.deliveryInfo.destination.resourceId // "") | endswith("/"+$sa))] | length')
+    if [[ "${on_ours}" -ge 1 ]]; then
+      ok "  ✓ export '${name}' exists and targets ${STORAGE_ACCOUNT}"
+      # Any same-named export pointing ELSEWHERE is a generation twin → data split.
+      local elsewhere
+      elsewhere=$(printf '%s' "${exports_json}" | jq -r --arg n "${name}" --arg sa "${STORAGE_ACCOUNT}" \
+        '[.value[] | select(.name==$n) | select((.properties.deliveryInfo.destination.resourceId // "") | endswith("/"+$sa) | not)] | length')
+      [[ "${elsewhere}" -ge 1 ]] && warn "    ⚠ a second '${name}' export points at a DIFFERENT storage account (generation twin) — delete it in the Portal (delete-by-name hits the wrong one)."
+    else
+      fail "Export '${name}' is missing or points at the wrong storage — no data will flow. (First create can 503 on RP registration; re-run.)"
+    fi
+
+    # Each export using a managed identity must have write on the storage.
+    local mi
+    mi=$(printf '%s' "${exports_json}" | jq -r --arg n "${name}" --arg sa "${STORAGE_ACCOUNT}" \
+      'first(.value[] | select(.name==$n) | select((.properties.deliveryInfo.destination.resourceId // "") | endswith("/"+$sa)) | .identity.principalId) // empty')
+    if [[ -n "${mi}" && "${mi}" != "null" ]]; then
+      if az role assignment list --assignee "${mi}" --scope "${STORAGE_ACCOUNT_ID}" \
+           --query "[?roleDefinitionName=='${ROLE_BLOB_CONTRIBUTOR}'] | length(@)" -o tsv 2>/dev/null \
+           | grep -q '^[1-9]'; then
+        ok "  ✓ export '${name}' managed identity has write on storage"
+      else
+        fail "Export '${name}' managed identity lacks '${ROLE_BLOB_CONTRIBUTOR}' on ${STORAGE_ACCOUNT} — its runs will fail (AccessToStorageAccountDenied) and no data flows."
+      fi
+    fi
+  done
+
+  # Event Grid: a subscription must exist AND point at the URL we were given.
+  if [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]]; then
+    local eg_dest
+    eg_dest=$(az eventgrid event-subscription list --source-resource-id "${STORAGE_ACCOUNT_ID}" \
+      --query "[?name=='${EVENT_SUB_NAME}'].destination.endpointBaseUrl | [0]" -o tsv 2>/dev/null || true)
+    if [[ -z "${eg_dest}" ]]; then
+      fail "Event Grid subscription '${EVENT_SUB_NAME}' is missing — blobs will never reach LumiTure."
+    elif [[ -n "${EVENT_TRIGGER_URL}" && "${eg_dest}" != "${EVENT_TRIGGER_URL}" ]]; then
+      fail "Event Grid subscription points at ${eg_dest} but the expected trigger is ${EVENT_TRIGGER_URL} — data would flow to the wrong environment (this is SILENT in Azure)."
+    else
+      ok "  ✓ Event Grid subscription targets the expected trigger URL"
+    fi
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Main flow
 # -----------------------------------------------------------------------------
 
@@ -531,9 +660,21 @@ main() {
 
   [[ "${WITH_USAGE}" -eq 1 ]] && grant_usage_role
 
+  verify_onboarding
+
   emit_form_values
   submit_to_lumiture
-  ok "Azure onboarding complete"
+
+  # Never claim success we didn't verify. A failed export/grant only warned above;
+  # here it becomes a non-zero exit with a named summary, so a half-broken
+  # onboarding (FOCUS-only, ungranted MI, misrouted export) can't read as complete.
+  if [[ "${#FAILURES[@]}" -gt 0 ]]; then
+    err "Azure onboarding INCOMPLETE — ${#FAILURES[@]} problem(s):"
+    for f in "${FAILURES[@]}"; do err "  • ${f}"; done
+    err "Fix the above and re-run. Data will NOT flow until every item is resolved."
+    exit 1
+  fi
+  ok "Azure onboarding complete — structure verified. Cost data lands in ~1 day (first export run + ingestion); confirm tomorrow, not today."
 }
 
 main "$@"
