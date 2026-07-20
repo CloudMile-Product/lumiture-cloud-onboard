@@ -30,7 +30,7 @@ Because Azure Cloud Shell has no "open this git repo + tutorial" badge like Goog
    ./init.sh --event-trigger-url <event-trigger URL provided by LumiTure>
    ```
 
-> ⚠️ **`--event-trigger-url` is required for data to flow.** Without it the script still applies the grants and creates the export and **exits 0 with no error** — but it skips the Event Grid subscription, so **billing data never reaches LumiTure**. It's a silent no-data outcome; don't omit it. The URL is env-specific (prod/dev/staging differ) and is not published here — get it from your LumiTure contact or the Azure wizard.
+> ⚠️ **`--event-trigger-url` is required for data to flow.** Without it the script applies the grants and creates the exports but skips the Event Grid subscription, so **billing data never reaches LumiTure**. The Phase 4 check catches this and **exits non-zero** naming the missing subscription — but the grants and exports it already made are real, so re-run with the URL rather than assuming nothing happened. The URL is env-specific (prod/dev/staging differ) and is not published here — get it from your LumiTure contact or the Azure wizard.
 
 Every other argument defaults correctly for production: **subscription** = your active `az` subscription, **tenant** = that login's tenant, **storage account** = auto-derived (`ltexp…`), **resource group** = `lumiture-billing-rg`, **LumiTure SP / API** = prod, **usage role + FOCUS export** = on.
 
@@ -45,7 +45,7 @@ Every other argument defaults correctly for production: **subscription** = your 
 
 | File | Purpose |
 |---|---|
-| `init.sh` | **The onboarding script — run this.** Consent pre-flight + RBAC grants + cost export + Event Grid subscription + form-value output |
+| `init.sh` | **The onboarding script — run this.** Consent pre-flight + RBAC grants + cost export + Event Grid subscription + structural self-check + form-value output |
 | `tutorial.md` | Step-by-step Cloud Shell walkthrough (**optional** — `init.sh` is self-contained; read this only if you want each phase explained) |
 | `bicep/` | Bicep module — declarative alternative (same role grants + export + Event Grid). See `bicep/README.md`. |
 
@@ -56,10 +56,11 @@ Every other argument defaults correctly for production: **subscription** = your 
 0. **Pre-flight:** confirms LumiTure's multi-tenant SP is consented in the tenant (browser step done first in the LumiTure wizard). Fails fast with instructions if not.
 1. Ensures a storage account + container exist for the Cost Management export, and sets a lifecycle rule that auto-deletes export blobs older than **180 days** (`--export-retention-days <n>` to tune, `--no-retention` to skip) — the daily exports never de-duplicate, so this keeps storage cost flat
 2. Grants `Cost Management Reader` (subscription) and `Storage Blob Data Reader` (storage account) to LumiTure's SP
-3. Creates a daily `ActualCost` export **and** (default) a FOCUS-format export — `--no-focus` to skip
+3. Creates a daily `ActualCost` export **and** (default) a FOCUS-format export — `--no-focus` to skip. If the export comes back carrying its own managed identity, grants that identity write access on the storage account — see [Export managed identity](#export-managed-identity)
 4. **(default)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs. Pass `--no-usage` for a minimal billing-only grant.
-5. Creates the **Event Grid subscription** (`BlobCreated` → LumiTure webhook) — the data path — when `--event-trigger-url` is supplied; **skipped with only a warning if it isn't**
-6. Prints the form values to enter in the LumiTure wizard
+5. Creates the **Event Grid subscription** (`BlobCreated` → LumiTure webhook) — the data path — when `--event-trigger-url` is supplied; skipped with a warning if it isn't, and the Phase 4 check below then **fails the run**
+6. **Verifies the result (Phase 4)** by reading the live state back: both exports exist and target the storage account this run derived, every export managed identity has write access, and the Event Grid subscription points at the trigger URL you passed. See [Failures are fatal](#failures-are-fatal)
+7. Prints the form values to enter in the LumiTure wizard
 
 Zero install on the customer's machine. Auth stays in the customer's Azure identity. LumiTure never sees the customer's credentials.
 
@@ -69,9 +70,25 @@ Zero install on the customer's machine. Auth stays in the customer's Azure ident
 
 Cost data flows to LumiTure via an **event trigger**, not by LumiTure reading your storage directly: your storage fires `BlobCreated` → Event Grid webhook → LumiTure ingests the export into its own managed storage.
 
-**Phase 2.7 creates that Event Grid subscription, and it only runs when you pass `--event-trigger-url`** (see [Try it](#try-it)). Omit it and Phase 2.7 warns and returns — grants and exports still succeed, the script still exits 0, and **no cost data ever arrives**. This is the single easiest way to end up with a "successful" onboarding and an empty dashboard.
+**Phase 2.7 creates that Event Grid subscription, and it only runs when you pass `--event-trigger-url`** (see [Try it](#try-it)). Omit it and Phase 2.7 warns and returns — the grants and exports still succeed, but no blobs ever reach LumiTure. Phase 4 then fails the run so this cannot pass as a successful onboarding.
 
 The endpoint must be a real function (it answers Event Grid's validation handshake) — a placeholder URL fails. Cost data lands once the export's first daily run completes (~24h).
+
+## Export managed identity
+
+A **new-generation** Cost Management export does not write to your storage as LumiTure's service principal — it writes as **its own identity**. Azure attaches a system-assigned managed identity to the export **only when the destination storage account disallows shared-key access** (common under CSP and enterprise security policy). That identity then needs `Storage Blob Data Contributor` on the storage account, or every export run fails with `AccessToStorageAccountDenied`.
+
+Azure surfaces none of this: the export exists, reads as healthy in the Portal, and simply produces no blobs.
+
+`init.sh` reads each export's identity back after creating it and grants that role whenever one is present (idempotent). It can do this because the script runs as **you**, a subscription Owner — LumiTure's read-only SP cannot grant roles, so this cannot be fixed from LumiTure's side afterwards. On shared-key-*allowed* storage the export carries no identity and the step correctly does nothing.
+
+## Failures are fatal
+
+Anything that would leave the pipeline half-wired — a failed export or role create, a missing Event Grid subscription, an export pointed at a different storage account, an export identity without write access — is collected, and the script **exits non-zero listing each problem**. A green `Azure onboarding complete` means the structure was read back and checked, not merely that the script reached the end.
+
+Phase 4 deliberately verifies **structure, not data**: the exports are dated from tomorrow and nothing has run yet. Cost data lands ~1 day later, so confirm the dashboard tomorrow rather than immediately.
+
+> **A second export with the same name on a different storage account** is a *generation twin* — an older-generation export left behind by an earlier run. Phase 4 warns about it. Delete it in the Portal: deleting by name from the CLI hits the wrong one.
 
 ## License
 
