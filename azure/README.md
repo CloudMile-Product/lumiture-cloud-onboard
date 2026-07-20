@@ -76,11 +76,11 @@ The endpoint must be a real function (it answers Event Grid's validation handsha
 
 ## Export managed identity
 
-A **new-generation** Cost Management export does not write to your storage as LumiTure's service principal — it writes as **its own identity**. Azure attaches a system-assigned managed identity to the export **only when the destination storage account disallows shared-key access** (common under CSP and enterprise security policy). That identity then needs `Storage Blob Data Contributor` on the storage account, or every export run fails with `AccessToStorageAccountDenied`.
+A Cost Management export does not write to your storage as LumiTure's service principal — it writes as **its own identity**.
 
-Azure surfaces none of this: the export exists, reads as healthy in the Portal, and simply produces no blobs.
+When the storage account **disallows shared-key access** (common under CSP and enterprise security policy), Azure gives the export a managed identity and writes through that instead. The identity needs `Storage Blob Data Contributor` on the storage account, or every export run fails with `AccessToStorageAccountDenied` — and Azure surfaces none of it: the export exists, reads as healthy in the Portal, and simply produces no blobs.
 
-`init.sh` reads each export's identity back after creating it and grants that role whenever one is present (idempotent). It can do this because the script runs as **you**, a subscription Owner — LumiTure's read-only SP cannot grant roles, so this cannot be fixed from LumiTure's side afterwards. On shared-key-*allowed* storage the export carries no identity and the step correctly does nothing.
+`init.sh` checks for that identity after creating each export and grants the role when one is present (safe to re-run). Only the script can do this, because it runs as **you**, a subscription Owner — LumiTure's read-only SP cannot grant roles, so this cannot be fixed from LumiTure's side afterwards. On shared-key-allowed storage the export has no such identity and the step is skipped.
 
 ## Failures are fatal
 
@@ -88,7 +88,7 @@ Anything that would leave the pipeline half-wired — a failed export or role cr
 
 Phase 4 deliberately verifies **structure, not data**: the exports are dated from tomorrow and nothing has run yet. Cost data lands ~1 day later, so confirm the dashboard tomorrow rather than immediately.
 
-> **A second export with the same name on a different storage account** is a *generation twin* — an older-generation export left behind by an earlier run. Phase 4 warns about it. Delete it in the Portal: deleting by name from the CLI hits the wrong one.
+> **A second export with the same name pointing at a different storage account** is usually left over from an earlier run, and splits your data across two places. Phase 4 warns about it. Delete it in the Portal: deleting by name from the CLI hits the wrong one.
 
 ## License
 
