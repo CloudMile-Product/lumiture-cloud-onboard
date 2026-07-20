@@ -37,6 +37,11 @@
 #   --with-usage                        create+assign the usage custom role (VM + Monitor metrics
 #                                       read) for rightsizing/usage data — ON by default (full FinOps)
 #   --no-usage                          skip the usage role (minimal, billing-only grant)
+#   --backfill-months   <n>             seed n months of HISTORY as one-time exports (default 3,
+#                                       matching GCP's first-connect backfill). 0 disables.
+#                                       Only the shell can do this — it runs as you (Owner);
+#                                       LumiTure's own service principal is read-only and
+#                                       cannot create exports.
 #   --lumiture-app-id   <GUID>          default: prod LumiTure multi-tenant SP app id
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
 #   --lumiture-jwt      <token>         provide to auto-submit; omit to finish in the wizard
@@ -102,6 +107,7 @@ EXPORT_NAME="daily-actual-cost"
 RETENTION_DAYS=180
 WITH_FOCUS=1
 WITH_USAGE=1
+BACKFILL_MONTHS=3
 EVENT_TRIGGER_URL=""
 EVENT_SUB_NAME="lumiture-billing-export"
 SKIP_EVENT_SUBSCRIPTION=0
@@ -127,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --no-focus) WITH_FOCUS=0; shift ;;
     --with-usage) WITH_USAGE=1; shift ;;
     --no-usage) WITH_USAGE=0; shift ;;
+    --backfill-months) BACKFILL_MONTHS="$2"; shift 2 ;;
     --event-trigger-url) EVENT_TRIGGER_URL="$2"; shift 2 ;;
     --event-sub-name) EVENT_SUB_NAME="$2"; shift 2 ;;
     --skip-event-subscription) SKIP_EVENT_SUBSCRIPTION=1; shift ;;
@@ -141,6 +148,11 @@ while [[ $# -gt 0 ]]; do
     *) die "Unknown option: $1 — try --help" ;;
   esac
 done
+
+# Validate before any arithmetic test reads it — `-gt` on a non-number aborts mid-run
+# instead of pointing at the argument that was actually wrong.
+[[ "${BACKFILL_MONTHS}" =~ ^[0-9]+$ ]] \
+  || die "--backfill-months must be a non-negative integer (got '${BACKFILL_MONTHS}')"
 
 # Defaults target LumiTure production; override with --lumiture-app-id / --lumiture-api if needed.
 [[ -n "${LUMITURE_APP_ID}" ]] || LUMITURE_APP_ID="${LUMITURE_APP_ID_PROD}"
@@ -405,6 +417,95 @@ grant_export_identity() {
 }
 
 # -----------------------------------------------------------------------------
+# Phase 2.55 — Historical backfill (one-time Custom exports)
+#
+# Azure captures only the CURRENT month on first connect; GCP backfills 3. The gap
+# can only be closed from here: LumiTure's service principal is read-only on the
+# customer subscription (Microsoft.CostManagement/*/read — an export PUT returns 401),
+# so no backend job can seed history. This shell runs as the customer (Owner) and can.
+#
+# One export per month, per Microsoft's documented seed pattern ("no more than one
+# month's of data per report"). Each month needs its OWN export name because the
+# LumiTure copy-function keys the "latest run" on the source prefix — sharing one
+# prefix would collapse every month into the newest run. Names follow
+# <canonical-subfolder>-backfill-<YYYYMM> so the function can route each blob back to
+# the canonical destination subfolder the transfer already reads.
+#
+# Rooted at "backfill" (not "cost") so a one-time historical export can never be
+# mistaken for the live recurring one.
+# -----------------------------------------------------------------------------
+
+# Echoes "<YYYYMM> <first-day> <last-day>" for the month N months before this one.
+month_bounds() {
+  local back="$1" prev first last
+  prev=$(( back - 1 ))
+  # GNU date (Cloud Shell) first, BSD/macOS fallback. The last day is derived as
+  # "first of the following month, minus a day" so month lengths and leap years
+  # never have to be special-cased.
+  first=$(date -u -d "$(date -u +%Y-%m-01) -${back} month" +%Y-%m-01 2>/dev/null \
+          || date -u -v1d -v-"${back}"m +%Y-%m-01)
+  last=$(date -u -d "$(date -u +%Y-%m-01) -${prev} month -1 day" +%Y-%m-%d 2>/dev/null \
+         || date -u -v1d -v-"${prev}"m -v-1d +%Y-%m-%d)
+  printf '%s %s %s' "${first:0:4}${first:5:2}" "${first}" "${last}"
+}
+
+create_backfill_export() {
+  local subfolder="$1" export_type="$2" yyyymm="$3" first="$4" last="$5"
+  local name="${subfolder}-backfill-${yyyymm}"
+
+  local api_version dataset
+  if [[ "${export_type}" == "FocusCost" ]]; then
+    api_version="2023-07-01-preview"
+    dataset='"granularity": "Daily", "configuration": { "dataVersion": "1.0" }'
+  else
+    api_version="2023-11-01"
+    dataset='"granularity": "Daily"'
+  fi
+
+  log "Phase 2.55 — Backfilling ${export_type} for ${first:0:7} as '${name}'…"
+  local url body
+  url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}?api-version=${api_version}"
+  # One-time export: schedule Inactive (no recurrence), Custom timeframe, and
+  # partitionData:true — Azure rejects a custom-timeframe export without it.
+  body="{\"properties\":{\"schedule\":{\"status\":\"Inactive\"},\"format\":\"Csv\",\"partitionData\":true,\"deliveryInfo\":{\"destination\":{\"resourceId\":\"${STORAGE_ACCOUNT_ID}\",\"container\":\"${CONTAINER}\",\"rootFolderPath\":\"backfill\"}},\"definition\":{\"type\":\"${export_type}\",\"timeframe\":\"Custom\",\"timePeriod\":{\"from\":\"${first}T00:00:00Z\",\"to\":\"${last}T23:59:59Z\"},\"dataSet\":{${dataset}}}}}"
+
+  if ! run az rest --method PUT --url "${url}" --headers "Content-Type=application/json" --body "${body}" -o none; then
+    fail "Backfill export '${name}' create failed — ${first:0:7} history will be missing."
+    return 1
+  fi
+
+  grant_export_identity "${name}" "${api_version}"
+
+  # A one-time export never fires on its own — it has no recurrence, so it must be
+  # executed explicitly or it produces nothing at all.
+  [[ "${DRY_RUN}" -eq 1 ]] && { ok "  DRY-RUN: would run backfill export '${name}'"; return 0; }
+  if run az rest --method POST \
+       --url "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}/run?api-version=${api_version}" \
+       -o none; then
+    ok "  Backfill '${name}' queued (${first} → ${last})"
+  else
+    fail "Backfill export '${name}' was created but could not be executed — no ${first:0:7} data will be produced."
+  fi
+}
+
+create_backfill_exports() {
+  log "Phase 2.55 — Seeding ${BACKFILL_MONTHS} month(s) of history (one one-time export per month)…"
+
+  local i yyyymm first last
+  for (( i = 1; i <= BACKFILL_MONTHS; i++ )); do
+    # Start at 1, not 0: the current month is already covered by the recurring
+    # MonthToDate export, and a second writer for it would fight over the same
+    # destination folder.
+    read -r yyyymm first last <<<"$(month_bounds "${i}")"
+    create_backfill_export "daily-actual-cost" "ActualCost" "${yyyymm}" "${first}" "${last}"
+    [[ "${WITH_FOCUS}" -eq 1 ]] && \
+      create_backfill_export "daily-focus-cost" "FocusCost" "${yyyymm}" "${first}" "${last}"
+  done
+  log "  Backfilled months are produced by Azure over the next hours; they appear in"
+  log "  LumiTure after the next ingestion cycle — not immediately."
+}
+
+# -----------------------------------------------------------------------------
 # Phase 2.6 — Usage custom role (opt-in: --with-usage)
 # Usage/rightsizing data needs the SP to read VMs + Azure Monitor metrics, which
 # Cost Management Reader does NOT cover. We create + assign a custom role for this.
@@ -615,6 +716,28 @@ verify_onboarding() {
     fi
   done
 
+  # Backfill exports: one per month per type, all on OUR storage. A missing one is a
+  # silently absent month of history, indistinguishable later from "the customer had
+  # no spend then".
+  if [[ "${BACKFILL_MONTHS}" -gt 0 ]]; then
+    local types=("daily-actual-cost")
+    [[ "${WITH_FOCUS}" -eq 1 ]] && types+=("daily-focus-cost")
+    local i yyyymm first last t bname present
+    for (( i = 1; i <= BACKFILL_MONTHS; i++ )); do
+      read -r yyyymm first last <<<"$(month_bounds "${i}")"
+      for t in "${types[@]}"; do
+        bname="${t}-backfill-${yyyymm}"
+        present=$(printf '%s' "${exports_json}" | jq -r --arg n "${bname}" --arg sa "${STORAGE_ACCOUNT}" \
+          '[.value[] | select(.name==$n) | select((.properties.deliveryInfo.destination.resourceId // "") | endswith("/"+$sa))] | length')
+        if [[ "${present}" -ge 1 ]]; then
+          ok "  ✓ backfill export '${bname}' exists"
+        else
+          fail "Backfill export '${bname}' is missing — ${first:0:7} history will never arrive."
+        fi
+      done
+    done
+  fi
+
   # Event Grid: a subscription must exist AND point at the URL we were given.
   if [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]]; then
     local eg_dest
@@ -654,6 +777,10 @@ main() {
     [[ "${WITH_FOCUS}" -eq 1 ]] && create_export "daily-focus-cost" "FocusCost" "daily-focus-cost"
     # The export only matters if its blobs reach LumiTure — wire the Event Grid subscription.
     [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]] && setup_event_subscription
+    # Strictly AFTER Event Grid: a backfill export runs within minutes, so wiring the
+    # subscription later would let the historical blobs land with nothing listening —
+    # they are one-time runs, so nothing would ever re-deliver them.
+    [[ "${BACKFILL_MONTHS}" -gt 0 ]] && create_backfill_exports
   else
     log "--skip-export set — grants applied, no Cost Management export created"
   fi
