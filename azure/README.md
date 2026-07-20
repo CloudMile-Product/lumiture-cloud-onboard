@@ -59,10 +59,13 @@ Every other argument defaults correctly for production: **subscription** = your 
 3. Creates a daily `ActualCost` export **and** (default) a FOCUS-format export — `--no-focus` to skip. If the export comes back carrying its own managed identity, grants that identity write access on the storage account — see [Export managed identity](#export-managed-identity)
 4. **(default)** Creates + assigns the **usage custom role** — `LumiTure FinOps Reader` (VM inventory + `Microsoft.Insights/Metrics/Read`) — for rightsizing/usage data. Cost Management Reader doesn't cover Monitor metrics. LumiTure validates this grant by listing VMs. Pass `--no-usage` for a minimal billing-only grant.
 5. Creates the **Event Grid subscription** (`BlobCreated` → LumiTure webhook) — the data path — when `--event-trigger-url` is supplied; skipped with a warning if it isn't, and the Phase 4 check below then **fails the run**
-6. **Verifies the result (Phase 4)** by reading the live state back: both exports exist and target the storage account this run derived, every export managed identity has write access, and the Event Grid subscription points at the trigger URL you passed. See [Failures are fatal](#failures-are-fatal)
-7. Prints the form values to enter in the LumiTure wizard
+6. **(default)** Seeds **3 months of history** as one-time exports, one per month, so your first dashboard shows a trend instead of only the current month — `--backfill-months <n>` to tune, `--backfill-months 0` to skip. Runs only once the Event Grid subscription (step 5) is actually wired — one-time exports never re-deliver, so without a listener the history would be lost; if step 5 was skipped, the backfill is skipped too (with a warning) and a later re-run with `--event-trigger-url` seeds it
+7. **Verifies the result (Phase 4)** by reading the live state back: both exports exist and target the storage account this run derived, every export managed identity has write access, and the Event Grid subscription points at the trigger URL you passed. See [Failures are fatal](#failures-are-fatal)
+8. Prints the form values to enter in the LumiTure wizard
 
 Zero install on the customer's machine. Auth stays in the customer's Azure identity. LumiTure never sees the customer's credentials.
+
+> **History is captured at onboarding, or not at all.** LumiTure's service principal is granted **read-only** access, which means it cannot create Cost Management exports — and an export is the only way to obtain historical FOCUS data. This script runs as *you* (subscription Owner), so it is the one place the backfill can happen. If you onboard with `--backfill-months 0`, recovering that history later requires re-running the script.
 
 > **Full FinOps by default.** The script grants the broader compute+metrics read role and creates the FOCUS export out of the box, so cost *and* rightsizing work immediately. For a **least-privilege, billing-only** onboarding, run with `--no-usage` (and `--no-focus`): you'll get just `Cost Management Reader` + `Storage Blob Data Reader` + the ActualCost export.
 
