@@ -111,6 +111,11 @@ BACKFILL_MONTHS=3
 EVENT_TRIGGER_URL=""
 EVENT_SUB_NAME="lumiture-billing-export"
 SKIP_EVENT_SUBSCRIPTION=0
+# Set once setup_event_subscription actually creates the subscription; the backfill
+# is gated on it because one-time export runs are never re-delivered.
+EVENT_SUB_WIRED=0
+# Set when the backfill phase actually ran, so Phase 4 only checks exports we created.
+BACKFILL_ATTEMPTED=0
 LUMITURE_APP_ID=""
 LUMITURE_API=""
 LUMITURE_JWT=""
@@ -469,26 +474,30 @@ create_backfill_export() {
   # partitionData:true — Azure rejects a custom-timeframe export without it.
   body="{\"properties\":{\"schedule\":{\"status\":\"Inactive\"},\"format\":\"Csv\",\"partitionData\":true,\"deliveryInfo\":{\"destination\":{\"resourceId\":\"${STORAGE_ACCOUNT_ID}\",\"container\":\"${CONTAINER}\",\"rootFolderPath\":\"backfill\"}},\"definition\":{\"type\":\"${export_type}\",\"timeframe\":\"Custom\",\"timePeriod\":{\"from\":\"${first}T00:00:00Z\",\"to\":\"${last}T23:59:59Z\"},\"dataSet\":{${dataset}}}}}"
 
-  if ! run az rest --method PUT --url "${url}" --headers "Content-Type=application/json" --body "${body}" -o none; then
-    fail "Backfill export '${name}' create failed — ${first:0:7} history will be missing."
-    return 1
-  fi
+  # Record-and-continue on failure (no early return): under `set -e` a non-zero
+  # return here would abort the whole onboarding mid-phase — skipping the remaining
+  # months, the verify phase, and the FAILURES summary.
+  if run az rest --method PUT --url "${url}" --headers "Content-Type=application/json" --body "${body}" -o none; then
+    grant_export_identity "${name}" "${api_version}"
 
-  grant_export_identity "${name}" "${api_version}"
-
-  # A one-time export never fires on its own — it has no recurrence, so it must be
-  # executed explicitly or it produces nothing at all.
-  [[ "${DRY_RUN}" -eq 1 ]] && { ok "  DRY-RUN: would run backfill export '${name}'"; return 0; }
-  if run az rest --method POST \
-       --url "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}/run?api-version=${api_version}" \
-       -o none; then
-    ok "  Backfill '${name}' queued (${first} → ${last})"
+    # A one-time export never fires on its own — it has no recurrence, so it must be
+    # executed explicitly or it produces nothing at all.
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      ok "  DRY-RUN: would run backfill export '${name}'"
+    elif run az rest --method POST \
+         --url "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.CostManagement/exports/${name}/run?api-version=${api_version}" \
+         -o none; then
+      ok "  Backfill '${name}' queued (${first} → ${last})"
+    else
+      fail "Backfill export '${name}' was created but could not be executed — no ${first:0:7} data will be produced."
+    fi
   else
-    fail "Backfill export '${name}' was created but could not be executed — no ${first:0:7} data will be produced."
+    fail "Backfill export '${name}' create failed — ${first:0:7} history will be missing."
   fi
 }
 
 create_backfill_exports() {
+  BACKFILL_ATTEMPTED=1
   log "Phase 2.55 — Seeding ${BACKFILL_MONTHS} month(s) of history (one one-time export per month)…"
 
   local i yyyymm first last
@@ -603,6 +612,7 @@ setup_event_subscription() {
       --endpoint "${url}" \
       -o none; then
     ok "Event subscription created → billing data flows to LumiTure on the next export run"
+    EVENT_SUB_WIRED=1
   else
     warn "Event subscription create failed — see the az error above."
     warn "  The endpoint must be reachable and pass Event Grid's validation handshake."
@@ -718,8 +728,9 @@ verify_onboarding() {
 
   # Backfill exports: one per month per type, all on OUR storage. A missing one is a
   # silently absent month of history, indistinguishable later from "the customer had
-  # no spend then".
-  if [[ "${BACKFILL_MONTHS}" -gt 0 ]]; then
+  # no spend then". Gated on the phase having actually run — when the backfill was
+  # skipped (no Event Grid subscription), its exports are legitimately absent.
+  if [[ "${BACKFILL_ATTEMPTED}" -eq 1 ]]; then
     local types=("daily-actual-cost")
     [[ "${WITH_FOCUS}" -eq 1 ]] && types+=("daily-focus-cost")
     local i yyyymm first last t bname present
@@ -777,10 +788,21 @@ main() {
     [[ "${WITH_FOCUS}" -eq 1 ]] && create_export "daily-focus-cost" "FocusCost" "daily-focus-cost"
     # The export only matters if its blobs reach LumiTure — wire the Event Grid subscription.
     [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 0 ]] && setup_event_subscription
-    # Strictly AFTER Event Grid: a backfill export runs within minutes, so wiring the
-    # subscription later would let the historical blobs land with nothing listening —
-    # they are one-time runs, so nothing would ever re-deliver them.
-    [[ "${BACKFILL_MONTHS}" -gt 0 ]] && create_backfill_exports
+    # Strictly AFTER Event Grid, and only once it is actually WIRED: a backfill export
+    # runs within minutes and is never re-delivered, so firing it with nothing
+    # listening would waste the one-time runs. --skip-event-subscription is the
+    # operator asserting a subscription already exists (e.g. a re-run), so it passes.
+    if [[ "${BACKFILL_MONTHS}" -gt 0 ]]; then
+      if [[ "${EVENT_SUB_WIRED}" -eq 1 || "${SKIP_EVENT_SUBSCRIPTION}" -eq 1 ]]; then
+        [[ "${SKIP_EVENT_SUBSCRIPTION}" -eq 1 ]] && \
+          warn "Phase 2.55 — --skip-event-subscription: backfilling on the assumption an Event Grid subscription already exists; without one the one-time runs are lost."
+        create_backfill_exports
+      else
+        warn "Phase 2.55 — Skipping the ${BACKFILL_MONTHS}-month history backfill: the Event Grid subscription was not created."
+        warn "  One-time exports fire within minutes and never re-deliver — the blobs would land with nothing listening."
+        warn "  Re-run this script with --event-trigger-url to wire delivery and seed history."
+      fi
+    fi
   else
     log "--skip-export set — grants applied, no Cost Management export created"
   fi
