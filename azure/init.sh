@@ -434,10 +434,27 @@ grant_usage_role() {
 JSON
 )
   log "Phase 2.6 — Ensuring custom usage role '${role_name}' on subscription…"
+  # Custom-role names are unique per directory (tenant-wide), but a scope-filtered list
+  # only shows roles assignable at THIS subscription — a role created on a prior run/env
+  # is invisible here yet still blocks create-by-name. So: update if we can see it, else
+  # create, and treat an "already exists" create error as success (the role is there; we
+  # just can't list it at this scope) and fall through to the assignment either way.
   if az role definition list --name "${role_name}" --scope "${scope}" --query "[0].roleName" -o tsv --only-show-errors 2>/dev/null | grep -q .; then
-    run az role definition update --role-definition "${role_def}" -o none || warn "Usage role update failed — see error above"
+    run az role definition update --role-definition "${role_def}" -o none 2>/dev/null \
+      || warn "Usage role update failed (continuing to assignment)"
+  elif [[ "${DRY_RUN}" -eq 1 ]]; then
+    log "DRY-RUN: az role definition create"
   else
-    run az role definition create --role-definition "${role_def}" -o none || { warn "Usage role create failed — see error above"; return 0; }
+    local create_err
+    if create_err=$(az role definition create --role-definition "${role_def}" 2>&1); then
+      ok "Usage role created"
+    elif grep -qiE "already exists|RoleDefinitionWithSameNameExists" <<<"${create_err}"; then
+      ok "Usage role already exists in the directory — reusing it (idempotent)"
+    else
+      warn "Usage role create failed — continuing without it:"
+      warn "  ${create_err}"
+      return 0
+    fi
   fi
 
   log "Phase 2.6 — Assigning '${role_name}' to LumiTure SP (custom roles can take ~1m to propagate)…"
