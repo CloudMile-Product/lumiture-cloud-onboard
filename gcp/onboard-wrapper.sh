@@ -66,7 +66,13 @@ ARGS=()
 [[ -n "${DETAILED_USAGE_DATASET}" ]] && ARGS+=(--detailed-usage-dataset "${DETAILED_USAGE_DATASET}")
 [[ -n "${PRICING_DATASET}" ]]      && ARGS+=(--pricing-dataset "${PRICING_DATASET}")
 
-"${ONBOARD}" "${ARGS[@]}"
+# Guard the empty-array case — "${ARGS[@]}" under `set -u` is an unbound-variable
+# error on bash < 4.4 (e.g. macOS's stock 3.2), which is the 0-arg auto-detect path.
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+  "${ONBOARD}" "${ARGS[@]}"
+else
+  "${ONBOARD}"
+fi
 
 echo ""
 ok "Done. Copy the JSON values above into the LumiTure wizard:"
