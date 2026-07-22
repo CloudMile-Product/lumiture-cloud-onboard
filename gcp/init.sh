@@ -16,13 +16,19 @@
 # Usage:
 #   init.sh [options]
 #
-# Required (or interactive prompt):
+# Required (or auto-detected):
 #   --billing-account-id     <NNNNNN-NNNNNN-NNNNNN>     Cloud Billing Account ID
+#                                                        (auto-selected when only one is visible)
 #   --export-project         <project-id>                GCP project hosting billing export datasets
 #   --detailed-usage-dataset <dataset-id>                BQ dataset for Detailed Usage Cost export
 #   --pricing-dataset        <dataset-id>                BQ dataset for Pricing export
 #
+# When --export-project / the datasets are omitted, they are auto-detected by
+# scanning the projects under the BA for the export's well-known table names
+# (billing-export config is Console-only, so we locate it by its output tables).
+#
 # Optional:
+#   --no-auto-detect-export  disable the export scan; require the flags above instead
 #   --grant-scope            project|dataset             default: dataset (tighter)
 #   --with-usage             also grant roles/monitoring.viewer on the scoping project
 #                            (usage/rightsizing metrics) + optional usage submit
@@ -73,6 +79,7 @@ EXPORT_PROJECT_ID=""
 DETAILED_USAGE_DATASET=""
 PRICING_DATASET=""
 GRANT_SCOPE="dataset"
+AUTO_DETECT_EXPORT=1
 WITH_USAGE=0
 SKIP_BILLING=0
 SCOPING_PROJECT_ID=""
@@ -88,6 +95,8 @@ while [[ $# -gt 0 ]]; do
     --export-project) EXPORT_PROJECT_ID="$2"; shift 2 ;;
     --detailed-usage-dataset) DETAILED_USAGE_DATASET="$2"; shift 2 ;;
     --pricing-dataset) PRICING_DATASET="$2"; shift 2 ;;
+    --auto-detect-export) AUTO_DETECT_EXPORT=1; shift ;;
+    --no-auto-detect-export) AUTO_DETECT_EXPORT=0; shift ;;
     --grant-scope) GRANT_SCOPE="$2"; shift 2 ;;
     --with-usage) WITH_USAGE=1; shift ;;
     --skip-billing) SKIP_BILLING=1; shift ;;
@@ -180,12 +189,59 @@ discover_billing_account() {
   fi
 }
 
+# List dataset / table IDs for a project as newline-separated names (quietly).
+bq_datasets() { bq ls --project_id="$1" --format=json 2>/dev/null | jq -r '.[]?.datasetReference.datasetId' 2>/dev/null; }
+bq_tables()   { bq ls --project_id="$1" "$2" --max_results=1000 --format=json 2>/dev/null | jq -r '.[]?.tableReference.tableId' 2>/dev/null; }
+
+# Locate the billing export by its output tables. The export config itself is
+# Console-only, but the tables it writes have fixed names: the Detailed Usage
+# Cost table is stamped with the BA id, and Pricing is always cloud_pricing_export.
+# Sets EXPORT_PROJECT_ID / DETAILED_USAGE_DATASET / PRICING_DATASET when found.
+autodetect_export() {
+  local detailed_table="gcp_billing_export_resource_v1_${BILLING_ACCOUNT_ID//-/_}"
+  log "Auto-detecting the billing-export project/datasets under ${BILLING_ACCOUNT_ID} (may take a moment)…"
+
+  local projects
+  projects=$(gcloud billing projects list --billing-account="${BILLING_ACCOUNT_ID}" --format='value(projectId)' 2>/dev/null) || true
+  [[ -n "${projects}" ]] || { warn "No projects visible under the BA to scan."; return 1; }
+
+  # Pass 1 — find the Detailed Usage Cost table; its project is the export project.
+  local p d
+  for p in ${projects}; do
+    for d in $(bq_datasets "${p}"); do
+      if bq_tables "${p}" "${d}" | grep -qx "${detailed_table}"; then
+        EXPORT_PROJECT_ID="${p}"; DETAILED_USAGE_DATASET="${d}"
+        ok "  Detailed Usage Cost → project=${p} dataset=${d}"
+        break 2
+      fi
+    done
+  done
+  [[ -n "${EXPORT_PROJECT_ID}" ]] || { warn "No ${detailed_table} table found in any visible project — export may not be enabled."; return 1; }
+
+  # Pass 2 — Pricing must live in the same project (we grant and query there).
+  for d in $(bq_datasets "${EXPORT_PROJECT_ID}"); do
+    if bq_tables "${EXPORT_PROJECT_ID}" "${d}" | grep -qx "cloud_pricing_export"; then
+      PRICING_DATASET="${d}"
+      ok "  Pricing → project=${EXPORT_PROJECT_ID} dataset=${d}"
+      break
+    fi
+  done
+  [[ -n "${PRICING_DATASET}" ]] || warn "  No cloud_pricing_export found — pass --pricing-dataset if Pricing export is enabled."
+  return 0
+}
+
 discover_export_project() {
   log "Phase 1.2 — Confirming billing-export-to-BQ enablement…"
 
+  # Default: locate the export by scanning the BA's projects for its output tables.
+  if [[ -z "${EXPORT_PROJECT_ID}" && "${AUTO_DETECT_EXPORT}" -eq 1 ]]; then
+    autodetect_export || true
+  fi
+
   if [[ -z "${EXPORT_PROJECT_ID}" ]]; then
-    warn "No --export-project specified. The script cannot auto-discover which project hosts the billing export — billing-export config is Console-only and not exposed via API."
-    warn "Please pass --export-project <id> based on the customer's Cloud Console: Billing → Billing export → BigQuery export → 'Project'"
+    warn "Could not determine the export project — billing-export config is Console-only and not exposed via API."
+    warn "Pass --export-project <id> from Cloud Console: Billing → Billing export → BigQuery export → 'Project'"
+    warn "(auto-detect scans the BA's projects for the export tables; --no-auto-detect-export disables it)."
     die "Missing --export-project"
   fi
 

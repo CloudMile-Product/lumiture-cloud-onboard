@@ -120,6 +120,8 @@ bash onboard-wrapper.sh \
   "${PRICING_DATASET}"
 ```
 
+> **Shortcut:** if you have a single billing account and standard export, you can skip Steps 2–4 and just run `bash onboard-wrapper.sh` with **no arguments** — it auto-selects your billing account and scans your projects for the export datasets. Pass the four values explicitly (above) only if auto-detect can't find them or you have multiple billing accounts.
+
 What the script does:
 1. Validates the freshness check passed (Step 4)
 2. Grants `roles/bigquery.dataViewer` on your datasets **and** `roles/billing.viewer` on your billing account to `lumiture-client@tw-rd-app-finops-prod.iam.gserviceaccount.com`

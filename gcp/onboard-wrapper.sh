@@ -5,9 +5,12 @@
 # designed for use inside Cloud Shell's tutorial walkthrough.
 #
 # Usage:
+#   bash onboard-wrapper.sh                                                    # full auto-detect
+#   bash onboard-wrapper.sh BILLING_ACCOUNT_ID                                 # BA fixed, export auto-detected
 #   bash onboard-wrapper.sh BILLING_ACCOUNT_ID EXPORT_PROJECT DETAILED_USAGE_DATASET PRICING_DATASET
 #
-# All 4 args are required. The tutorial collects them interactively in steps 2-3.
+# With 0 or 1 args, init.sh auto-selects the single visible BA and/or scans the
+# BA's projects for the export tables. Pass all 4 to pin them explicitly.
 
 set -euo pipefail
 
@@ -17,12 +20,16 @@ ok()  { printf "%b %s\n" "${c_grn}✅${c_off}" "$*" >&2; }
 die() { printf "%b %s\n" "${c_red}✗${c_off}"  "$*" >&2; exit 1; }
 
 # ── Arg parsing ──────────────────────────────────────────────────
-[[ $# -eq 4 ]] || die "Need 4 args: BILLING_ACCOUNT_ID EXPORT_PROJECT DETAILED_USAGE_DATASET PRICING_DATASET"
+# 0 args = full auto-detect, 1 = BA only, 4 = fully explicit. 2/3 are ambiguous.
+case $# in
+  0|1|4) ;;
+  *) die "Pass 0 args (auto-detect), 1 (BILLING_ACCOUNT_ID), or 4 (BA EXPORT_PROJECT DETAILED_USAGE_DATASET PRICING_DATASET)" ;;
+esac
 
-BILLING_ACCOUNT_ID="$1"
-EXPORT_PROJECT_ID="$2"
-DETAILED_USAGE_DATASET="$3"
-PRICING_DATASET="$4"
+BILLING_ACCOUNT_ID="${1:-}"
+EXPORT_PROJECT_ID="${2:-}"
+DETAILED_USAGE_DATASET="${3:-}"
+PRICING_DATASET="${4:-}"
 
 # ── Path to the underlying onboard script ────────────────────────
 # In Cloud Shell, this repo is cloned to ~/cloudshell_open by default;
@@ -35,10 +42,10 @@ ONBOARD="${SCRIPT_DIR}/init.sh"
 # ── Friendly summary ─────────────────────────────────────────────
 echo ""
 log "About to onboard your GCP billing data to LumiTure:"
-echo "    Billing Account:        ${BILLING_ACCOUNT_ID}"
-echo "    Export Project:         ${EXPORT_PROJECT_ID}"
-echo "    Detailed Usage dataset: ${DETAILED_USAGE_DATASET}"
-echo "    Pricing dataset:        ${PRICING_DATASET}"
+echo "    Billing Account:        ${BILLING_ACCOUNT_ID:-<auto-select single BA>}"
+echo "    Export Project:         ${EXPORT_PROJECT_ID:-<auto-detect>}"
+echo "    Detailed Usage dataset: ${DETAILED_USAGE_DATASET:-<auto-detect>}"
+echo "    Pricing dataset:        ${PRICING_DATASET:-<auto-detect>}"
 echo ""
 log "This will:"
 echo "    1. Verify data is flowing in your billing export dataset"
@@ -52,11 +59,14 @@ read -p "Continue? [Y/n] " confirm
 log "Running discovery + freshness validation..."
 echo ""
 
-"${ONBOARD}" \
-  --billing-account-id "${BILLING_ACCOUNT_ID}" \
-  --export-project "${EXPORT_PROJECT_ID}" \
-  --detailed-usage-dataset "${DETAILED_USAGE_DATASET}" \
-  --pricing-dataset "${PRICING_DATASET}"
+# Forward only the values provided; init.sh auto-detects the rest.
+ARGS=()
+[[ -n "${BILLING_ACCOUNT_ID}" ]]   && ARGS+=(--billing-account-id "${BILLING_ACCOUNT_ID}")
+[[ -n "${EXPORT_PROJECT_ID}" ]]    && ARGS+=(--export-project "${EXPORT_PROJECT_ID}")
+[[ -n "${DETAILED_USAGE_DATASET}" ]] && ARGS+=(--detailed-usage-dataset "${DETAILED_USAGE_DATASET}")
+[[ -n "${PRICING_DATASET}" ]]      && ARGS+=(--pricing-dataset "${PRICING_DATASET}")
+
+"${ONBOARD}" "${ARGS[@]}"
 
 echo ""
 ok "Done. Copy the JSON values above into the LumiTure wizard:"
