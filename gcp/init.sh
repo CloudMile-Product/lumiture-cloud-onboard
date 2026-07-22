@@ -191,7 +191,7 @@ discover_billing_account() {
 
 # List dataset / table IDs for a project as newline-separated names (quietly).
 bq_datasets() { bq ls --project_id="$1" --format=json 2>/dev/null | jq -r '.[]?.datasetReference.datasetId' 2>/dev/null; }
-bq_tables()   { bq ls --project_id="$1" "$2" --max_results=1000 --format=json 2>/dev/null | jq -r '.[]?.tableReference.tableId' 2>/dev/null; }
+bq_tables()   { bq ls --format=json --max_results=1000 "${1}:${2}" 2>/dev/null | jq -r '.[]?.tableReference.tableId' 2>/dev/null; }
 
 # Locate the billing export by its output tables. The export config itself is
 # Console-only, but the tables it writes have fixed names: the Detailed Usage
