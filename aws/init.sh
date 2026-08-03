@@ -372,11 +372,17 @@ resolve_external_id() {
     return 0
   fi
 
+  # Scan every trust statement for the one naming LumiTure's principal — the
+  # LumiTure statement isn't guaranteed to be Statement[0] on a pre-existing
+  # role. Reuse only an unambiguous (single distinct) ExternalId.
   local existing
   existing=$(aws iam get-role --role-name "${ROLE_NAME}" \
-    --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals."sts:ExternalId"' \
-    --output text 2>/dev/null || true)
-  if [[ -n "${existing}" && "${existing}" != "None" ]]; then
+      --query 'Role.AssumeRolePolicyDocument' --output json 2>/dev/null \
+    | jq -r --arg p "${LUMITURE_PRINCIPAL_ARN}" \
+        '[.Statement[]? | select((.Principal.AWS // empty) == $p)
+          | .Condition.StringEquals."sts:ExternalId" // empty | select(. != "")]
+         | unique | if length == 1 then .[0] else "" end' 2>/dev/null || true)
+  if [[ -n "${existing}" ]]; then
     EXTERNAL_ID="${existing}"
     ok "Reusing the ExternalId already on role ${ROLE_NAME} (re-run detected; the value you may have already submitted stays valid)"
     return 0
@@ -430,9 +436,11 @@ ensure_policy() {
   local nver
   nver=$(aws iam list-policy-versions --policy-arn "${POLICY_ARN}" --query 'length(Versions)' --output text)
   if [[ "${nver}" -ge 5 ]]; then
+    # Pick the oldest by CreateDate explicitly — the API doesn't promise the
+    # list's ordering, and deleting the wrong version would drop a rollback point.
     local oldest
-    oldest=$(aws iam list-policy-versions --policy-arn "${POLICY_ARN}" \
-               --query 'Versions[?IsDefaultVersion==`false`] | [-1].VersionId' --output text)
+    oldest=$(aws iam list-policy-versions --policy-arn "${POLICY_ARN}" --output json \
+      | jq -r '[.Versions[] | select(.IsDefaultVersion | not)] | sort_by(.CreateDate) | first.VersionId')
     log "  At the 5-version cap — deleting oldest non-default version ${oldest}"
     run aws iam delete-policy-version --policy-arn "${POLICY_ARN}" --version-id "${oldest}"
   fi
@@ -579,12 +587,16 @@ deploy_usage_stackset() {
     return 0
   fi
 
+  # FailureTolerancePercentage defaults to 0, which would stop the whole
+  # operation on the first failed account — set it to LumiTure's own 50%
+  # threshold so the post-operation tally below is what actually decides.
   local op_id
   op_id=$(aws cloudformation create-stack-instances \
     --stack-set-name "${STACKSET_NAME}" \
     --deployment-targets OrganizationalUnitIds="${targets// /,}" \
     --regions "${AWS_REGION}" \
     --region "${AWS_REGION}" \
+    --operation-preferences FailureTolerancePercentage=50 \
     --query OperationId --output text 2>&1) \
     || { fail "create-stack-instances failed: ${op_id}"; return 0; }
 
@@ -601,7 +613,12 @@ deploy_usage_stackset() {
     log "  operation ${status} (${i}/30)…"
     sleep 30
   done
-  [[ "${status}" == "SUCCEEDED" ]] || warn "  Operation still ${status} after 15min — continuing; verify in the console."
+  if [[ "${status}" != "SUCCEEDED" ]]; then
+    # A non-terminal operation must never lead to a usage submit — the backend
+    # would validate a StackSet that is still deploying.
+    fail "StackSet operation still ${status} after 15min — usage will NOT be auto-submitted. Watch it finish in the CloudFormation console, then submit usage in the wizard."
+    return 0
+  fi
 
   # LumiTure tolerates up to 50% failed instances; mirror that tally here.
   local total failed
