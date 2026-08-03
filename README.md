@@ -12,11 +12,12 @@ This repo holds **one sibling flow per cloud**. They share a consistent shape (a
 |---|---|---|---|---|---|
 | **GCP** | [`gcp/`](gcp/) | Google Cloud Shell ([badge](gcp/README.md#try-it)) | IAM on existing BQ export | Terraform | ✅ Live |
 | **Azure** | [`azure/`](azure/) | Azure Cloud Shell + browser admin-consent | Admin-consent + Cost Management Reader + Storage Blob Data Reader | Bicep | ✅ Live |
-| **AWS** | — | CloudFormation Launch-Stack / AWS CloudShell | Cross-account IAM role (+ ExternalId) | CloudFormation | ⬜ Planned |
+| **AWS** | [`aws/`](aws/) | AWS CloudShell / CloudFormation | Cross-account IAM role (+ ExternalId); export-management writes limited to two dedicated buckets | CloudFormation | ✅ Live |
 
 Start with the per-cloud README:
 - **[`gcp/README.md`](gcp/README.md)** — "Open in Cloud Shell" badge → guided grant
 - **[`azure/README.md`](azure/README.md)** — open Azure Cloud Shell → clone → guided grant
+- **[`aws/README.md`](aws/README.md)** — open AWS CloudShell → clone → cross-account role (LumiTure provisions the exports itself)
 
 ## Why per-cloud, not one unified apply
 

@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  LumiTure FinOps billing integration — creates the cross-account IAM role
+  (trusting LumiTure with an ExternalId) and the customer-managed policy
+  LumiTure validates. LumiTure assumes this role to provision the billing
+  exports itself; S3 writes are restricted to the two dedicated
+  lumiture-<account>-cur / -focus buckets. No workload access.
+
+Parameters:
+  ExternalId:
+    Type: String
+    MinLength: 5
+    Description: >-
+      The ExternalId shown in the LumiTure AWS wizard (any 12-character
+      alphanumeric value works — submit the SAME value in the wizard form).
+  RoleName:
+    Type: String
+    Default: LumiTureIntegrationRole
+    Description: Name of the cross-account role to create.
+  PolicyName:
+    Type: String
+    Default: LumiTureIntegrationPolicy
+    Description: Name of the customer-managed policy to create.
+
+Resources:
+  # LumiTure's permission check compares this document to the live policy with
+  # STRICT equality, not a superset check. Statement order, every action, and
+  # even Resource being a plain "*" (statements 2 and 4) vs a one-element list
+  # (statement 3) must match the server-side document. Do not "clean up" the
+  # inconsistencies — they are the contract.
+  IntegrationPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Ref PolicyName
+      Description: >-
+        LumiTure FinOps integration — billing-export management, S3 writes
+        restricted to the dedicated lumiture-* buckets.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetBucketLocation
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:CreateBucket
+              - s3:PutBucketPolicy
+              - s3:PutBucketNotification
+              - s3:GetBucketNotification
+            Resource:
+              - !Sub 'arn:aws:s3:::lumiture-${AWS::AccountId}-cur'
+              - !Sub 'arn:aws:s3:::lumiture-${AWS::AccountId}-focus'
+          - Effect: Allow
+            Action:
+              - bcm-data-exports:CreateExport
+              - bcm-data-exports:ListExports
+              - bcm-data-exports:GetExport
+              - bcm-data-exports:DeleteExport
+              - bcm-data-exports:UpdateExport
+              - cur:PutReportDefinition
+              - cur:DeleteReportDefinition
+              - cur:ModifyReportDefinition
+              - cur:DescribeReportDefinitions
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - organizations:ListAccounts
+              - iam:ListAttachedRolePolicies
+              - iam:GetPolicy
+              - iam:GetPolicyVersion
+              - iam:ListAccountAliases
+              - account:GetAccountInformation
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+              - cloudformation:DescribeStackInstance
+              - cloudformation:DescribeStackSet
+              - cloudformation:DescribeStacks
+              - cloudformation:ListStackInstances
+              - cloudformation:ListStackSets
+              - cloudformation:ListStacks
+              - cloudformation:UpdateStackSet
+              - cloudwatch:Describe*
+              - cloudwatch:Get*
+              - cloudwatch:List*
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceStatus
+            Resource: '*'
+
+  IntegrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Cross-account role assumed by LumiTure (FinOps billing integration).
+      ManagedPolicyArns:
+        - !Ref IntegrationPolicy
+      # No MFA condition — LumiTure's programmatic AssumeRole cannot satisfy one.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::536697256548:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+
+Outputs:
+  RoleArn:
+    Description: Paste into the LumiTure wizard as "Role ARN".
+    Value: !GetAtt IntegrationRole.Arn
+  PolicyArn:
+    Description: Paste into the LumiTure wizard as "Policy ARN".
+    Value: !Ref IntegrationPolicy
+  AccountId:
+    Description: Paste into the LumiTure wizard as "Account ID".
+    Value: !Ref AWS::AccountId
+  ExternalId:
+    Description: Paste into the LumiTure wizard as "External ID" (same value you entered).
+    Value: !Ref ExternalId
