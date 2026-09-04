@@ -85,7 +85,7 @@ Billing must connect first; usage can always be added later from the [usage wiza
 
 Anything that would leave the integration half-wired — a drifted policy document, a missing attachment, a trust policy without the ExternalId, a mostly-failed StackSet — is collected, and the script **exits non-zero listing each problem** (and skips auto-submit). A green `AWS onboarding complete` means the structure was read back and checked, not merely that the script reached the end.
 
-Phase 5 deliberately verifies **structure, not data**: LumiTure provisions the exports at submit time and AWS's first daily run lands ~24h later. Data covers **integration time onward — no backfill** — so confirm the dashboard tomorrow, not today.
+Phase 5 deliberately verifies **structure, not data**: LumiTure provisions the exports at submit time and AWS's first daily run lands ~24h later. It includes the **current billing month from the 1st through today**, refreshed daily; prior months are not backfilled — so confirm the dashboard tomorrow, not today.
 
 > **The #1 rejection cause is a policy that doesn't exactly match.** LumiTure compares documents with strict equality — a reordered statement or a hand-added action fails the permission check. If you customized the policy, re-run `./init.sh` to rewrite it.
 

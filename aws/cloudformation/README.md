@@ -7,6 +7,15 @@ Declarative alternative to the bash / CloudShell flow. Same end state:
 
 Run it in the **Organization management (payer) account** — same rule as the script. The optional usage integration (member-account monitoring StackSet) is separate; see [`../README.md`](../README.md#usage-integration-optional).
 
+CloudFormation cannot make the script's Organization-management-account preflight check. Before deploying, run:
+
+```bash
+aws sts get-caller-identity --query Account --output text
+aws organizations describe-organization --query 'Organization.MasterAccountId' --output text
+```
+
+The two account IDs must match. `AWSOrganizationsNotInUseException` is also acceptable for a standalone account.
+
 ## Three ways to deploy
 
 ### 1. Quick-create link (one-click — pending template hosting)

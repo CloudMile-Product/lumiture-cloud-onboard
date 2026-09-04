@@ -24,8 +24,10 @@ Open **AWS CloudShell** from the console (the `>_` icon in the top bar) or <http
 CloudShell already has `aws` (v2), `jq`, and `git`, and uses your console identity. Clone this repo:
 
 ```bash
-git clone https://github.com/CloudMile-Product/lumiture-cloud-onboard.git && cd lumiture-cloud-onboard/aws
+git clone --branch aws-onboarding-kit https://github.com/CloudMile-Product/lumiture-cloud-onboard.git && cd lumiture-cloud-onboard/aws
 ```
+
+> Until this kit merges to `main`, keep the `--branch aws-onboarding-kit` flag; drop it after the merge.
 
 Confirm you're in the right account:
 
@@ -93,7 +95,7 @@ Enter the values, click **Check Permission** (must pass first), then **Integrate
 ## Step 3 — When does data appear?
 
 - **Connection**: within seconds of the Integrate call succeeding.
-- **Cost data**: AWS's first daily export run lands within ~24h. Data covers **integration time onward — there is no backfill**, so don't expect historical months.
+- **Cost data**: AWS's first daily export run lands within ~24h. It includes the **current billing month from the 1st through today**, refreshed daily; prior months are not backfilled.
 
 ## Cleanup / revoke
 

@@ -21,7 +21,8 @@
 #
 # Optional (everything defaults for production):
 #   --role-name         <name>   IAM role to create (default: LumiTureIntegrationRole)
-#   --policy-name       <name>   IAM policy to create (default: LumiTureIntegrationPolicy)
+#   --policy-name       <name>   IAM policy to create (default: LumiTureIntegrationPolicy).
+#                                Must start with "LumiTure" — the script owns this policy's document and versions.
 #   --external-id       <id>     ExternalId for the role trust. Default: reuse the one
 #                                already on the role (re-runs), else fetch from the
 #                                LumiTure API (with --lumiture-jwt), else generate locally.
@@ -99,22 +100,28 @@ LUMITURE_API=""
 LUMITURE_JWT=""
 DISCOVER_ONLY=0
 DRY_RUN=0
+VERBOSE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --role-name) ROLE_NAME="$2"; shift 2 ;;
-    --policy-name) POLICY_NAME="$2"; shift 2 ;;
-    --external-id) EXTERNAL_ID="$2"; EXTERNAL_ID_EXPLICIT=1; shift 2 ;;
+    --role-name|--policy-name|--external-id|--stackset-name|--member-role-name|--usage-external-id|--ou-ids|--lumiture-api|--lumiture-jwt)
+      [[ $# -ge 2 ]] || die "Option $1 requires a value"
+      case "$1" in
+        --role-name) ROLE_NAME="$2" ;;
+        --policy-name) POLICY_NAME="$2" ;;
+        --external-id) EXTERNAL_ID="$2"; EXTERNAL_ID_EXPLICIT=1 ;;
+        --stackset-name) STACKSET_NAME="$2" ;;
+        --member-role-name) MEMBER_ROLE_NAME="$2" ;;
+        --usage-external-id) USAGE_EXTERNAL_ID="$2" ;;
+        --ou-ids) OU_IDS="$2" ;;
+        --lumiture-api) LUMITURE_API="$2" ;;
+        --lumiture-jwt) LUMITURE_JWT="$2" ;;
+      esac
+      shift 2 ;;
     --with-usage) WITH_USAGE=1; shift ;;
-    --stackset-name) STACKSET_NAME="$2"; shift 2 ;;
-    --member-role-name) MEMBER_ROLE_NAME="$2"; shift 2 ;;
-    --usage-external-id) USAGE_EXTERNAL_ID="$2"; shift 2 ;;
-    --ou-ids) OU_IDS="$2"; shift 2 ;;
-    --lumiture-api) LUMITURE_API="$2"; shift 2 ;;
-    --lumiture-jwt) LUMITURE_JWT="$2"; shift 2 ;;
     --discover-only) DISCOVER_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
-    --verbose) set -x; shift ;;
+    --verbose) VERBOSE=1; shift ;;
     --help|-h) sed -n '2,/^$/p' "$0"; exit 0 ;;
     *) die "Unknown option: $1 — try --help" ;;
   esac
@@ -122,6 +129,26 @@ done
 
 # Defaults target LumiTure production; override with --lumiture-api if needed.
 [[ -n "${LUMITURE_API}" ]] || LUMITURE_API="${LUMITURE_API_PROD}"
+
+# Names are validated to the IAM/CloudFormation charset so they can be interpolated safely.
+# Only the policy keeps a LumiTure prefix: the kit rewrites its document and prunes its versions.
+[[ "${ROLE_NAME}" =~ ^[A-Za-z0-9_+=,.@-]{1,64}$ ]] \
+  || die "--role-name must be a valid IAM role name (letters, digits, _+=,.@-; max 64)"
+[[ "${POLICY_NAME}" =~ ^LumiTure[A-Za-z0-9_+=,.@-]{0,55}$ ]] \
+  || die "--policy-name must start with LumiTure (this script rewrites and prunes that policy's versions)"
+[[ "${STACKSET_NAME}" =~ ^[A-Za-z][A-Za-z0-9-]{0,127}$ ]] \
+  || die "--stackset-name must be a valid StackSet name (letters, digits, hyphens; max 128)"
+[[ "${MEMBER_ROLE_NAME}" =~ ^[A-Za-z0-9_+=,.@-]{1,64}$ ]] \
+  || die "--member-role-name must be a valid IAM role name (letters, digits, _+=,.@-; max 64)"
+[[ -z "${OU_IDS}" || "${OU_IDS}" =~ ^ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*$ ]] \
+  || die "--ou-ids must be comma-separated AWS OU IDs"
+[[ "${LUMITURE_API}" =~ ^https://([A-Za-z0-9-]+\.)*lumiture\.ai(:[0-9]+)?(/[^\?#]*)?$ ]] \
+  || die "--lumiture-api must be an HTTPS LumiTure.ai endpoint"
+if [[ "${VERBOSE}" -eq 1 && -n "${LUMITURE_JWT}" ]]; then
+  warn "--verbose is disabled while a LumiTure JWT is present to keep the token out of shell tracing"
+elif [[ "${VERBOSE}" -eq 1 ]]; then
+  set -x
+fi
 
 # -----------------------------------------------------------------------------
 # Run helper — respects --dry-run
@@ -226,19 +253,8 @@ EOF
 }
 
 trust_policy_json() {
-  cat <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": { "AWS": "${LUMITURE_PRINCIPAL_ARN}" },
-      "Action": "sts:AssumeRole",
-      "Condition": { "StringEquals": { "sts:ExternalId": "${EXTERNAL_ID}" } }
-    }
-  ]
-}
-EOF
+  jq -n --arg principal "${LUMITURE_PRINCIPAL_ARN}" --arg external_id "${EXTERNAL_ID}" \
+    '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {AWS: $principal}, Action: "sts:AssumeRole", Condition: {StringEquals: {"sts:ExternalId": $external_id}}}]}'
 }
 
 # Returns 0 when the live default policy version equals the expected document.
@@ -273,6 +289,8 @@ preflight() {
   ok "Active AWS identity: $(jq -r '.Arn' <<<"${ident_json}") (account ${ACCOUNT_ID})"
 
   [[ "${ACCOUNT_ID}" =~ ^[0-9]{12}$ ]] || die "Could not resolve a 12-digit account id"
+  [[ "${ACCOUNT_ID}" != "${LUMITURE_AWS_ACCOUNT_ID}" ]] \
+    || die "Refusing to onboard LumiTure's own AWS account (${LUMITURE_AWS_ACCOUNT_ID})"
 
   # ARNs are deterministic — usable even before the resources exist (dry-run, discover).
   ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
@@ -327,7 +345,7 @@ check_management_account() {
 
 check_export_quota() {
   log "Phase 0.5 — Checking bcm-data-exports quota headroom (LumiTure adds 1 CUR + 1 FOCUS)…"
-  local arns arn cur_count=0 focus_count=0
+  local arns arn cur_count=0 focus_count=0 lumiture_count=0
   # AWS CLI v2 auto-paginates list calls — no manual NextToken loop needed.
   if ! arns=$(aws bcm-data-exports list-exports --region "${AWS_REGION}" \
                 --query 'Exports[].ExportArn' --output json 2>&1); then
@@ -336,17 +354,25 @@ check_export_quota() {
     return 0
   fi
 
-  for arn in $(jq -r '.[]' <<<"${arns}"); do
-    local table
-    table=$(aws bcm-data-exports get-export --export-arn "${arn}" --region "${AWS_REGION}" \
-              --query 'Export.DataQuery.TableConfigurations | keys(@) | [0]' --output text 2>/dev/null || true)
+  while IFS= read -r arn; do
+    local export_json name table
+    export_json=$(aws bcm-data-exports get-export --export-arn "${arn}" --region "${AWS_REGION}" \
+      --query 'Export.{Name:Name,Table:DataQuery.TableConfigurations | keys(@) | [0]}' --output json 2>/dev/null || true)
+    name=$(jq -r '.Name // empty' <<<"${export_json}" 2>/dev/null || true)
+    case "${name}" in
+      lumiture_focus_report|lumiture_cost_and_usage_report)
+        lumiture_count=$((lumiture_count + 1))
+        continue
+        ;;
+    esac
+    table=$(jq -r '.Table // empty' <<<"${export_json}" 2>/dev/null || true)
     case "${table}" in
       COST_AND_USAGE_REPORT) cur_count=$((cur_count + 1)) ;;
       FOCUS_1_0_AWS) focus_count=$((focus_count + 1)) ;;
     esac
-  done
+  done < <(jq -r '.[]' <<<"${arns}")
 
-  log "  Existing exports: ${cur_count}/${CUR_LIMIT} CUR, ${focus_count}/${FOCUS_LIMIT} FOCUS"
+  log "  Existing non-LumiTure exports: ${cur_count}/${CUR_LIMIT} CUR, ${focus_count}/${FOCUS_LIMIT} FOCUS (excluding ${lumiture_count} LumiTure-named export(s))"
   [[ "${cur_count}" -lt "${CUR_LIMIT}" ]] \
     || die "This account already has ${cur_count} CUR exports (AWS cap ${CUR_LIMIT}) — delete one or onboarding will fail at LumiTure's quota check."
   [[ "${focus_count}" -lt "${FOCUS_LIMIT}" ]] \
@@ -431,7 +457,7 @@ ensure_policy() {
     return 0
   fi
 
-  warn "  Existing policy differs from the expected document — updating (new default version)…"
+  warn "  Existing LumiTure policy differs from the expected document — updating (new default version)…"
   # Managed policies hold at most 5 versions; prune the oldest non-default first.
   local nver
   nver=$(aws iam list-policy-versions --policy-arn "${POLICY_ARN}" --query 'length(Versions)' --output text)
@@ -476,10 +502,10 @@ ensure_role() {
       ok "Role exists with the expected trust policy (idempotent)"
     else
       if [[ "${EXTERNAL_ID_EXPLICIT}" -eq 1 ]]; then
-        warn "  Updating the trust policy — if a different ExternalId was already submitted to LumiTure, that submission stops working."
-      else
-        warn "  Trust policy differs from the expected shape — rewriting it (ExternalId preserved: ${EXTERNAL_ID})."
+        fail "Role ${ROLE_NAME} already trusts LumiTure with a different ExternalId; refusing to replace it (a prior submission would stop working). Re-run without --external-id to keep the existing one."
+        return 0
       fi
+      warn "  Trust policy differs from the expected shape — rewriting it (ExternalId preserved: ${EXTERNAL_ID})."
       run aws iam update-assume-role-policy --role-name "${ROLE_NAME}" \
         --policy-document "$(trust_policy_json)"
       ok "Trust policy updated"
@@ -645,45 +671,40 @@ emit_form_values() {
   log "  billing wizard: ${LUMITURE_WIZARD_URL}"
   [[ "${WITH_USAGE}" -eq 1 ]] && log "  usage wizard:   ${LUMITURE_USAGE_WIZARD_URL}"
   if [[ "${WITH_USAGE}" -eq 1 && -n "${USAGE_EXTERNAL_ID}" ]]; then
-    cat <<EOF
-{
-  "billing": {
-    "account_id": "${ACCOUNT_ID}",
-    "role_arn": "${ROLE_ARN}",
-    "policy_arn": "${POLICY_ARN}",
-    "external_id": "${EXTERNAL_ID}"
-  },
-  "usage": {
-    "account_id": "${ACCOUNT_ID}",
-    "stackset_name": "${STACKSET_NAME}",
-    "role_name": "${MEMBER_ROLE_NAME}",
-    "external_id": "${USAGE_EXTERNAL_ID}"
-  }
-}
-EOF
+    jq -n --arg account_id "${ACCOUNT_ID}" --arg role_arn "${ROLE_ARN}" \
+      --arg policy_arn "${POLICY_ARN}" --arg external_id "${EXTERNAL_ID}" \
+      --arg stackset_name "${STACKSET_NAME}" --arg role_name "${MEMBER_ROLE_NAME}" \
+      --arg usage_external_id "${USAGE_EXTERNAL_ID}" \
+      '{billing: {account_id: $account_id, role_arn: $role_arn, policy_arn: $policy_arn, external_id: $external_id}, usage: {account_id: $account_id, stackset_name: $stackset_name, role_name: $role_name, external_id: $usage_external_id}}'
   else
-    cat <<EOF
-{
-  "billing": {
-    "account_id": "${ACCOUNT_ID}",
-    "role_arn": "${ROLE_ARN}",
-    "policy_arn": "${POLICY_ARN}",
-    "external_id": "${EXTERNAL_ID}"
-  }
-}
-EOF
+    jq -n --arg account_id "${ACCOUNT_ID}" --arg role_arn "${ROLE_ARN}" \
+      --arg policy_arn "${POLICY_ARN}" --arg external_id "${EXTERNAL_ID}" \
+      '{billing: {account_id: $account_id, role_arn: $role_arn, policy_arn: $policy_arn, external_id: $external_id}}'
   fi
 }
 
-# POST helper: api_post <path> <payload> <max_time> → sets HTTP_STATUS, HTTP_BODY_FILE
+# Prints only the API's structured error fields; the raw body is never echoed.
+api_error_summary() {
+  local summary
+  summary=$(jq -r '[.message?, .data.code?, (.data.detail.error_code? // [] | .[])] | map(select(. != null and . != "")) | join(" / ")' <<<"${HTTP_BODY}" 2>/dev/null || true)
+  [[ -n "${summary}" ]] && err "  API said: ${summary}"
+  return 0
+}
+
+# POST helper: api_post <path> <payload> <max_time> → sets HTTP_STATUS, HTTP_BODY
 api_post() {
-  local path="$1" payload="$2" max_time="${3:-60}"
-  HTTP_BODY_FILE=$(mktemp)
-  HTTP_STATUS=$(curl -s -o "${HTTP_BODY_FILE}" -w '%{http_code}' --max-time "${max_time}" \
+  local path="$1" payload="$2" max_time="${3:-60}" response
+  if ! response=$(curl -s -w $'\n%{http_code}' --max-time "${max_time}" \
     -X POST "${LUMITURE_API}${path}" \
     -H "Authorization: Bearer ${LUMITURE_JWT}" \
     -H "Content-Type: application/json" \
-    -d "${payload}")
+    -d "${payload}"); then
+    HTTP_STATUS=000
+    HTTP_BODY=""
+  else
+    HTTP_STATUS="${response##*$'\n'}"
+    HTTP_BODY="${response%$'\n'*}"
+  fi
 }
 
 submit_to_lumiture() {
@@ -694,10 +715,9 @@ submit_to_lumiture() {
   fi
 
   local payload
-  payload=$(cat <<EOF
-{"account_id": "${ACCOUNT_ID}", "role_arn": "${ROLE_ARN}", "policy_arn": "${POLICY_ARN}", "external_id": "${EXTERNAL_ID}"}
-EOF
-)
+  payload=$(jq -n --arg account_id "${ACCOUNT_ID}" --arg role_arn "${ROLE_ARN}" \
+    --arg policy_arn "${POLICY_ARN}" --arg external_id "${EXTERNAL_ID}" \
+    '{account_id: $account_id, role_arn: $role_arn, policy_arn: $policy_arn, external_id: $external_id}')
 
   # Step 1 — permission check. A just-created role/trust regularly fails
   # AssumeRole for 10-60s (IAM eventual consistency), so retry that case.
@@ -710,13 +730,13 @@ EOF
       passed=1
       break
     fi
-    if [[ "${HTTP_STATUS}" -eq 403 ]] && grep -q 'PermissionDeny' "${HTTP_BODY_FILE}" && [[ "${attempt}" -lt 6 ]]; then
+    if [[ "${HTTP_STATUS}" -eq 403 ]] && grep -q 'PermissionDeny' <<<"${HTTP_BODY}" && [[ "${attempt}" -lt 6 ]]; then
       warn "  permission check not passing yet (likely IAM propagation) — retrying in 15s (${attempt}/6)…"
       sleep 15
       continue
     fi
     err "Permission check failed: HTTP ${HTTP_STATUS}"
-    cat "${HTTP_BODY_FILE}" >&2; echo >&2
+    api_error_summary
     fail "LumiTure permission check rejected the setup — integration not submitted."
     return 0
   done
@@ -727,11 +747,11 @@ EOF
   log "Phase 4.s — Submitting integration (LumiTure now provisions buckets + exports; can take a minute)…"
   api_post "/platforms/aws/billing/integration" "${payload}" 300
   if [[ "${HTTP_STATUS}" -ge 200 && "${HTTP_STATUS}" -lt 300 ]]; then
-    ok "Billing integration registered (HTTP ${HTTP_STATUS}) — first cost data lands in ~24h (no backfill)"
+    ok "Billing integration registered (HTTP ${HTTP_STATUS}) — first cost data lands in ~24h (current billing month to date; no prior-month history)"
   else
     err "Integration failed: HTTP ${HTTP_STATUS}"
-    cat "${HTTP_BODY_FILE}" >&2; echo >&2
-    fail "LumiTure billing integration failed — see the response above."
+    api_error_summary
+    fail "LumiTure billing integration failed."
     return 0
   fi
 
@@ -740,16 +760,15 @@ EOF
   if [[ "${USAGE_DEPLOYED:-0}" -eq 1 ]]; then
     log "Phase 4.s — Submitting usage integration…"
     local usage_payload
-    usage_payload=$(cat <<EOF
-{"account_id": "${ACCOUNT_ID}", "stackset_name": "${STACKSET_NAME}", "role_name": "${MEMBER_ROLE_NAME}", "external_id": "${USAGE_EXTERNAL_ID}"}
-EOF
-)
+    usage_payload=$(jq -n --arg account_id "${ACCOUNT_ID}" --arg stackset_name "${STACKSET_NAME}" \
+      --arg role_name "${MEMBER_ROLE_NAME}" --arg external_id "${USAGE_EXTERNAL_ID}" \
+      '{account_id: $account_id, stackset_name: $stackset_name, role_name: $role_name, external_id: $external_id}')
     api_post "/platforms/aws/usage/integration" "${usage_payload}" 120
     if [[ "${HTTP_STATUS}" -ge 200 && "${HTTP_STATUS}" -lt 300 ]]; then
       ok "Usage integration registered (HTTP ${HTTP_STATUS})"
     else
       err "Usage integration failed: HTTP ${HTTP_STATUS}"
-      cat "${HTTP_BODY_FILE}" >&2; echo >&2
+      api_error_summary
       fail "LumiTure usage integration failed — billing is connected; fix and submit usage in the wizard."
     fi
   fi
@@ -780,12 +799,16 @@ verify_onboarding() {
     local principal eid
     principal=$(jq -r '.Statement[0].Principal.AWS // empty' <<<"${trust}")
     eid=$(jq -r '.Statement[0].Condition.StringEquals."sts:ExternalId" // empty' <<<"${trust}")
-    [[ "${principal}" == "${LUMITURE_PRINCIPAL_ARN}" ]] \
-      && ok "  ✓ role trusts ${LUMITURE_PRINCIPAL_ARN}" \
-      || fail "Role trust principal is '${principal}', expected ${LUMITURE_PRINCIPAL_ARN}."
-    [[ "${eid}" == "${EXTERNAL_ID}" ]] \
-      && ok "  ✓ trust carries the emitted ExternalId" \
-      || fail "Trust ExternalId ('${eid}') differs from the emitted form value ('${EXTERNAL_ID}')."
+    if [[ "${principal}" == "${LUMITURE_PRINCIPAL_ARN}" ]]; then
+      ok "  ✓ role trusts ${LUMITURE_PRINCIPAL_ARN}"
+    else
+      fail "Role trust principal is '${principal}', expected ${LUMITURE_PRINCIPAL_ARN}."
+    fi
+    if [[ "${eid}" == "${EXTERNAL_ID}" ]]; then
+      ok "  ✓ trust carries the emitted ExternalId"
+    else
+      fail "Trust ExternalId ('${eid}') differs from the emitted form value ('${EXTERNAL_ID}')."
+    fi
     grep -q 'MultiFactorAuthPresent' <<<"${trust}" \
       && fail "Trust policy has an MFA condition — LumiTure's programmatic AssumeRole cannot satisfy it; remove it."
   fi
@@ -814,12 +837,16 @@ verify_onboarding() {
       local p_role p_arn
       p_role=$(jq -r '.StackSet.Parameters[] | select(.ParameterKey=="RoleName").ParameterValue' <<<"${ss}")
       p_arn=$(jq -r '.StackSet.Parameters[] | select(.ParameterKey=="ThirdPartyPrincipalArn").ParameterValue' <<<"${ss}")
-      [[ "${p_role}" == "${MEMBER_ROLE_NAME}" ]] \
-        && ok "  ✓ StackSet RoleName parameter matches the form value" \
-        || fail "StackSet RoleName parameter ('${p_role}') differs from the form value ('${MEMBER_ROLE_NAME}')."
-      [[ "${p_arn}" == "${LUMITURE_PRINCIPAL_ARN}" ]] \
-        && ok "  ✓ StackSet ThirdPartyPrincipalArn is LumiTure's principal" \
-        || fail "StackSet ThirdPartyPrincipalArn ('${p_arn}') is not ${LUMITURE_PRINCIPAL_ARN}."
+      if [[ "${p_role}" == "${MEMBER_ROLE_NAME}" ]]; then
+        ok "  ✓ StackSet RoleName parameter matches the form value"
+      else
+        fail "StackSet RoleName parameter ('${p_role}') differs from the form value ('${MEMBER_ROLE_NAME}')."
+      fi
+      if [[ "${p_arn}" == "${LUMITURE_PRINCIPAL_ARN}" ]]; then
+        ok "  ✓ StackSet ThirdPartyPrincipalArn is LumiTure's principal"
+      else
+        fail "StackSet ThirdPartyPrincipalArn ('${p_arn}') is not ${LUMITURE_PRINCIPAL_ARN}."
+      fi
       local live_tb hosted_tb
       live_tb=$(jq -r '.StackSet.TemplateBody' <<<"${ss}")
       hosted_tb=$(curl -s "${STACKSET_TEMPLATE_URL}" || true)
@@ -876,7 +903,7 @@ main() {
     err "Fix the above and re-run. LumiTure cannot connect until every item is resolved."
     exit 1
   fi
-  ok "AWS onboarding complete — structure verified. After submitting, LumiTure provisions the exports; first cost data lands in ~24h (integration-time onward, no backfill)."
+  ok "AWS onboarding complete — structure verified. After submitting, LumiTure provisions the exports; first cost data lands in ~24h (current billing month to date; no prior-month history)."
 }
 
 main "$@"
