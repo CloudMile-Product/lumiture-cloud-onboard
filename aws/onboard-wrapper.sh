@@ -74,7 +74,8 @@ else
   echo "    ${STEP}. Print form values for you to paste into the LumiTure wizard"
 fi
 echo ""
-read -p "Continue? [Y/n] " confirm
+[[ -t 0 ]] || die "Interactive confirmation needs a terminal; run init.sh directly for non-interactive use."
+read -r -p "Continue? [Y/n] " confirm || die "Could not read confirmation."
 [[ "${confirm:-Y}" =~ ^[Yy] ]] || die "Aborted."
 
 echo ""
@@ -103,7 +104,7 @@ echo ""
 if [[ -n "${LUMITURE_JWT}" ]]; then
   ok "Done — your account is registered with LumiTure."
   echo "LumiTure has provisioned the billing exports; cost data appears after the first"
-  echo "daily export run lands (~24h, from integration time onward — no backfill)."
+  echo "daily export run lands (~24h, with the current billing month to date; no prior-month history)."
 else
   ok "Role + policy done. Enter the JSON values above into the LumiTure wizard:"
   echo "    👉 https://app.lumiture.ai/authorization/billing-integration/aws"
