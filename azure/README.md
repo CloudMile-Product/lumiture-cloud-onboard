@@ -54,7 +54,7 @@ It ends with `READY` or `NOT READY`; each `FAIL` line says what is missing or wh
 
 Good to know before running it:
 - Azure Policy is not evaluated: a policy such as allowed locations (`init.sh` creates storage in `eastasia` by default) or "no public storage accounts" can still block `init.sh`. Check with your Azure admin if your tenant enforces such policies.
-- Your Activity Log / Entra sign-in logs will show the read calls it makes under your identity (permissions list, provider reads, up to two Cost Management queries per subscription) — expected, nothing is written.
+- Your Activity Log / Entra sign-in logs will show the read calls it makes under your identity (permissions list, your role assignments and their role definitions, Microsoft Graph reads of your own user and directory roles, the LumiTure app lookup, provider reads, up to two Cost Management queries per subscription) — expected, nothing is written.
 - Don't run it with `bash -x`: tracing can print access tokens, so that output must never be shared.
 
 ## What's in this directory
