@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# LumiTure Azure pre-session check — READ-ONLY, changes nothing.
+# LumiTure Azure pre-session check — READ-ONLY, makes no cloud changes.
 #
 # Run in Azure Cloud Shell (Bash) as the SAME person who will drive the onboarding
-# session. It asserts that this login holds every permission azure/init.sh needs,
-# per subscription, so a missing role is found days before the session instead
-# of halfway through it.
+# session. READY means azure/init.sh should not stop on a consent or permission
+# problem for these subscriptions, so a missing role is found days before the
+# session instead of halfway through it.
+#
+# Checked at subscription scope from your role assignments. Not evaluated: deny
+# assignments, and grants that exist only on a resource group or resource.
 #
 # If your role comes from PIM (Privileged Identity Management), ACTIVATE it first —
 # an eligible-but-inactive role does not count, here or on the day.
@@ -33,12 +36,12 @@ SUBS=(); WITH_USAGE=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-usage) WITH_USAGE=0; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) SUBS+=("$1"); shift ;;
   esac
 done
-[[ ${#SUBS[@]} -gt 0 ]] || { sed -n '2,18p' "$0"; exit 2; }
+[[ ${#SUBS[@]} -gt 0 ]] || { sed -n '2,21p' "$0"; exit 2; }
 for t in az jq; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
 
 ACCT=$(az account show -o json 2>/dev/null) || { echo "No active az login — run 'az login' first" >&2; exit 2; }
@@ -58,18 +61,16 @@ else
     --url 'https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole?$select=displayName' \
     --query 'value[].displayName' -o tsv 2>/dev/null)
   if grep -qx "Global Administrator" <<<"${roles}"; then
-    pass "LumiTure app not consented yet, but you are Global Administrator and can consent in the session"
-  elif grep -qxE "Privileged Role Administrator|Cloud Application Administrator|Application Administrator" <<<"${roles}"; then
-    warn "LumiTure app not consented yet; your role ($(grep -xE 'Privileged Role Administrator|Cloud Application Administrator|Application Administrator' <<<"${roles}" | head -1)) can usually consent — safest is to click 'Connect Azure' in the LumiTure wizard now and Accept, before the session"
+    warn "LumiTure app not consented yet — init.sh stops until it is. You are Global Administrator: click 'Connect Azure' in the LumiTure wizard and Accept, then re-run this check"
   else
-    fail "LumiTure app not consented, and this login has no admin role that can consent. Ask a Global Administrator to click 'Connect Azure' in the LumiTure wizard and Accept, before the session"
+    fail "LumiTure app not consented yet — init.sh stops until it is. Ask a Global Administrator to click 'Connect Azure' in the LumiTure wizard and Accept, then re-run this check"
   fi
 fi
 
 # Effective permission check against the caller's own role assignments
 # (union of each assignment's actions minus its notActions; wildcards honoured).
 JQ_ALLOWED='
-  def re: "^" + (gsub("\\.";"\\.") | gsub("\\*";".*")) + "$";
+  def re: "^" + (gsub("(?<c>[.+?^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*"; ".*")) + "$";
   def m($a): . as $p | $a | test($p|re; "i");
   . as $perms | $want | map(. as $w | {(.): ([$perms.value[] | select((any(.actions[]; m($w))) and (any((.notActions // [])[]; m($w)) | not))] | length > 0)}) | add
 '
@@ -94,11 +95,18 @@ check_sub() {
   fi
   [[ "${quota}" == CSP_* ]] && info "CSP subscription — bought through a Microsoft partner (reseller)"
 
-  local perms
-  if ! perms=$(az rest --method get --url "${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01" -o json 2>/dev/null); then
-    fail "could not read your effective permissions on this subscription"
-    return
-  fi
+  local perms='[]' page url="${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01"
+  while [[ -n "${url}" ]]; do
+    if ! page=$(az rest --method get --url "${url}" -o json 2>/dev/null); then
+      fail "could not read your effective permissions on this subscription"
+      return
+    fi
+    perms=$(jq -c --argjson p "${page}" '. + ($p.value // [])' <<<"${perms}")
+    url=$(jq -r '.nextLink // empty' <<<"${page}")
+  done
+  perms=$(jq -c '{value: .}' <<<"${perms}")
+  jq -e '[.value[] | select(.condition != null)] | length > 0' >/dev/null 2>&1 <<<"${perms}" \
+    && warn "some of your role assignments carry conditions (e.g. limits on which roles you may assign) — this check cannot evaluate them"
 
   local want='["Microsoft.Authorization/roleAssignments/write",
     "Microsoft.Resources/subscriptions/resourceGroups/write",
@@ -108,6 +116,11 @@ check_sub() {
     "Microsoft.CostManagement/exports/write",
     "Microsoft.EventGrid/eventSubscriptions/write",
     "Microsoft.Authorization/roleDefinitions/write",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.Storage/storageAccounts/read",
+    "Microsoft.CostManagement/exports/read",
+    "Microsoft.EventGrid/eventSubscriptions/read",
     "Microsoft.CostManagementExports/register/action",
     "Microsoft.EventGrid/register/action"]'
   local res
@@ -124,11 +137,16 @@ check_sub() {
            Microsoft.Storage/storageAccounts/blobServices/containers/write \
            Microsoft.Storage/storageAccounts/managementPolicies/write \
            Microsoft.CostManagement/exports/write \
-           Microsoft.EventGrid/eventSubscriptions/write; do
+           Microsoft.EventGrid/eventSubscriptions/write \
+           Microsoft.Authorization/roleAssignments/read \
+           Microsoft.Authorization/roleDefinitions/read \
+           Microsoft.Storage/storageAccounts/read \
+           Microsoft.CostManagement/exports/read \
+           Microsoft.EventGrid/eventSubscriptions/read; do
     ok_action "$a" || missing="${missing} ${a}"
   done
   [[ -z "${missing}" ]] \
-    && pass "can create the export storage, Cost Management exports and Event Grid subscription" \
+    && pass "can create and verify the export storage, Cost Management exports and Event Grid subscription" \
     || fail "missing:${missing} — needs Contributor (or Owner) on the subscription"
 
   if [[ ${WITH_USAGE} -eq 1 ]]; then
@@ -137,19 +155,18 @@ check_sub() {
       || fail "cannot create the usage custom role (roleDefinitions/write) — needs Owner or User Access Administrator; or onboard with --no-usage"
   fi
 
+  # init.sh always runs 'az provider register', even when the provider is already registered.
   local ns state
   for ns in Microsoft.CostManagementExports Microsoft.EventGrid; do
     state=$(az provider show -n "${ns}" --subscription "${sub}" --query registrationState -o tsv 2>/dev/null)
-    if [[ "${state}" == "Registered" ]]; then
-      pass "resource provider ${ns} already registered"
-    elif ok_action "${ns}/register/action"; then
-      pass "resource provider ${ns} is ${state:-unknown}; you can register it (init.sh does)"
+    if ok_action "${ns}/register/action"; then
+      pass "can register resource provider ${ns} (currently ${state:-unknown}; init.sh always registers it)"
     else
-      fail "resource provider ${ns} is ${state:-unknown} and you cannot register it — needs Contributor or Owner"
+      fail "cannot register resource provider ${ns} (currently ${state:-unknown}) — init.sh always runs the register step; needs Contributor or Owner"
     fi
   done
 
-  # Can this login read cost at all? On a CSP subscription the partner must allow customer cost visibility.
+  # Diagnostic only (init.sh never queries cost): can this login read cost at all?
   local q code
   q=$(az rest --method post \
       --url "${ARM}/subscriptions/${sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01" \
@@ -160,9 +177,9 @@ check_sub() {
   else
     code=$(grep -oE '\((\w+)\)|"code": *"[A-Za-z]+"' <<<"${q}" | head -1)
     if [[ "${quota}" == CSP_* ]]; then
-      fail "cannot read Cost Management data ${code} — on a CSP subscription the partner must enable cost visibility for the customer in Partner Center"
+      warn "cannot read Cost Management data ${code} — on a CSP subscription the partner may need to enable cost visibility for the customer in Partner Center"
     else
-      fail "cannot read Cost Management data ${code}"
+      warn "cannot read Cost Management data ${code}"
     fi
   fi
 }

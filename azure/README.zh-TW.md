@@ -68,14 +68,14 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 
 ## 介接前權限檢查
 
-請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Azure Cloud Shell（Bash）執行。此腳本**僅讀取、不做任何變更**，確認管理員同意狀態，以及 `init.sh` 在每個訂用帳戶上所需的權限。若角色來自 PIM，請先啟用。
+請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Azure Cloud Shell（Bash）執行。此腳本**僅讀取，不變更任何雲端資源**。結果為 `READY` 代表 `init.sh` 不會因管理員同意或權限問題中斷。請先完成管理員同意（腳本也會檢查）；若角色來自 PIM，請先啟用再執行。
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
 bash preflight.sh <訂用帳戶 ID> [<訂用帳戶 ID> ...]     # 僅介接帳單時加上 --no-usage
 ```
 
-結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。
+結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。權限以您在訂用帳戶層級的角色指派評估；拒絕指派（deny assignment）及僅授予於資源群組層級的權限不在評估範圍內。
 
 ## 本目錄檔案
 

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# LumiTure GCP pre-session check — READ-ONLY, changes nothing.
+# LumiTure GCP pre-session check — READ-ONLY, makes no cloud changes.
 #
 # Run in Google Cloud Shell as the SAME person who will drive the onboarding
-# session. It asserts that this login holds every permission gcp/init.sh needs,
-# per billing account, so a missing grant is found days before the session
-# instead of halfway through it.
+# session. READY means init.sh (default dataset grant scope) should not stop on
+# a permission or export problem for these billing accounts, so a missing grant
+# is found days before the session instead of halfway through it.
 #
 # Usage:
-#   bash preflight.sh <BA_ID> [<BA_ID> ...] [--export-project <id>] [--scoping-project <id>]
+#   bash preflight.sh <BA_ID> [<BA_ID> ...] [--export-project <id>] [--with-usage] [--scoping-project <id>]
 #
 #   --export-project   skip the auto-scan and check this project as the billing-export project
+#   --with-usage       usage / rightsizing will be onboarded too (init.sh --with-usage): its grant becomes required
 #   --scoping-project  project LumiTure reads usage metrics from (default: the export project)
 #
 # Exit code: 0 = all required checks passed, 1 = at least one FAIL.
@@ -17,6 +18,8 @@
 set -uo pipefail
 
 readonly LUMITURE_SA="lumiture-client@tw-rd-app-finops-prod.iam.gserviceaccount.com"
+# init.sh lists datasets without --max_results, so bq returns only the first 50.
+readonly INIT_DATASET_LIMIT=50
 
 c_red='\033[0;31m'; c_grn='\033[0;32m'; c_ylw='\033[0;33m'; c_blu='\033[0;34m'; c_off='\033[0m'
 FAILS=0; WARNS=0; SUMMARY=""
@@ -25,18 +28,21 @@ fail() { printf "  %b %s\n" "${c_red}FAIL${c_off}" "$*"; FAILS=$((FAILS+1)); SUM
 warn() { printf "  %b %s\n" "${c_ylw}WARN${c_off}" "$*"; WARNS=$((WARNS+1)); SUMMARY="${SUMMARY}WARN  ${CUR}: $*\n"; }
 info() { printf "  %b %s\n" "${c_blu}info${c_off}" "$*"; }
 hdr()  { printf "\n%b\n" "${c_blu}== $* ==${c_off}"; }
+usage() { sed -n '2,17p' "$0"; exit "$1"; }
 
-BAS=(); EXPORT_PROJECT_ARG=""; SCOPING_PROJECT_ARG=""
+BAS=(); EXPORT_PROJECT_ARG=""; SCOPING_PROJECT_ARG=""; WITH_USAGE=0
+need_val() { [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || { echo "Option $1 needs a value" >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --export-project) EXPORT_PROJECT_ARG="$2"; shift 2 ;;
-    --scoping-project) SCOPING_PROJECT_ARG="$2"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --export-project) need_val "$@"; EXPORT_PROJECT_ARG="$2"; shift 2 ;;
+    --scoping-project) need_val "$@"; SCOPING_PROJECT_ARG="$2"; shift 2 ;;
+    --with-usage) WITH_USAGE=1; shift ;;
+    -h|--help) usage 0 ;;
     -*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) BAS+=("$1"); shift ;;
   esac
 done
-[[ ${#BAS[@]} -gt 0 ]] || { sed -n '2,17p' "$0"; exit 2; }
+[[ ${#BAS[@]} -gt 0 ]] || usage 2
 
 for t in gcloud bq jq curl; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
 
@@ -47,6 +53,12 @@ CUR="login"
 hdr "Login"
 info "Checking as: ${ME}"
 info "This must be the person who will run the onboarding on the day."
+# init.sh refuses to start without Application Default Credentials.
+if gcloud auth application-default print-access-token >/dev/null 2>&1; then
+  pass "Application Default Credentials available"
+else
+  fail "Application Default Credentials not set — run 'gcloud auth application-default login' (init.sh stops without them)"
+fi
 
 # POST <url> testIamPermissions with the given permissions; prints the granted ones.
 test_perms() {
@@ -54,7 +66,7 @@ test_perms() {
   local body
   body=$(jq -cn '{permissions: $ARGS.positional}' --args "$@")
   curl -s -X POST "${url}" -H "Authorization: Bearer ${TOK}" \
-    -H "Content-Type: application/json" -d "${body}" | jq -r '.permissions[]?'
+    -H "Content-Type: application/json" -d "${body}" | jq -r '.permissions[]?' 2>/dev/null
 }
 has() { grep -qx "$1" <<<"$2"; }
 
@@ -71,6 +83,17 @@ bq_ls_json() {
 }
 datasets_of() { bq_ls_json --project_id="$1" | jq -r '.[]?.datasetReference.datasetId'; }
 tables_of()   { bq_ls_json "$1:$2" | jq -r '.[]?.tableReference.tableId'; }
+rows_of()     { bq show --format=json "$1" 2>/dev/null | jq -r '.numRows // empty' 2>/dev/null; }
+
+# Finds the dataset in <project> holding <table>; prints "<dataset> <0-based position>".
+find_table() {
+  local proj="$1" table="$2" i=0 d
+  for d in $(datasets_of "${proj}"); do
+    if tables_of "${proj}" "${d}" | grep -qx "${table}"; then echo "${d} ${i}"; return 0; fi
+    i=$((i+1))
+  done
+  return 1
+}
 
 check_ba() {
   local ba="$1"
@@ -85,8 +108,9 @@ check_ba() {
   info "name: $(jq -r '.displayName' <<<"${desc}") · open: $(jq -r '.open' <<<"${desc}")"
   local parent
   parent=$(jq -r '.masterBillingAccount // empty' <<<"${desc}")
+  parent="${parent#billingAccounts/}"
   if [[ -n "${parent}" ]]; then
-    info "RESELLER SUB-ACCOUNT — parent ${parent#billingAccounts/}. The reseller may hold the admin role, not you."
+    info "RESELLER SUB-ACCOUNT — parent ${parent}. The reseller may hold the admin role, not you."
   else
     info "direct billing account (no reseller parent)"
   fi
@@ -95,9 +119,10 @@ check_ba() {
   granted=$(test_perms "https://cloudbilling.googleapis.com/v1/billingAccounts/${ba}:testIamPermissions" \
     billing.accounts.get billing.accounts.getIamPolicy billing.accounts.setIamPolicy billing.resourceAssociations.list)
 
-  # Granting roles/billing.viewer to LumiTure's SA needs setIamPolicy (roles/billing.admin).
-  if has billing.accounts.setIamPolicy "${granted}"; then
-    pass "can grant roles/billing.viewer to LumiTure (billing.accounts.setIamPolicy)"
+  # init.sh always runs 'gcloud billing accounts add-iam-policy-binding' (a policy read
+  # then write), even when LumiTure already holds the role — so both are required.
+  if has billing.accounts.setIamPolicy "${granted}" && has billing.accounts.getIamPolicy "${granted}"; then
+    pass "can grant roles/billing.viewer to LumiTure (billing.accounts.getIamPolicy + setIamPolicy)"
   else
     local already=""
     if has billing.accounts.getIamPolicy "${granted}"; then
@@ -105,33 +130,29 @@ check_ba() {
         | jq -r --arg m "serviceAccount:${LUMITURE_SA}" '.bindings[]? | select(.role=="roles/billing.viewer") | .members[] | select(.==$m)')
     fi
     if [[ -n "${already}" ]]; then
-      pass "LumiTure SA already holds roles/billing.viewer — no grant needed on the day"
+      fail "LumiTure already holds roles/billing.viewer, but init.sh still re-applies it and stops there (after the dataset grants, before printing the form values). Run init.sh as a Billing Account Administrator of ${ba}, or tell LumiTure to finish this account by hand"
     elif [[ -n "${parent}" ]]; then
-      fail "cannot grant roles/billing.viewer (needs Billing Account Administrator). Ask the reseller that owns ${parent#billingAccounts/} to grant roles/billing.viewer on ${ba} to ${LUMITURE_SA}"
+      fail "cannot grant roles/billing.viewer (needs Billing Account Administrator). Ask the reseller that owns ${parent} to grant roles/billing.viewer on ${ba} to ${LUMITURE_SA}"
     else
       fail "cannot grant roles/billing.viewer (needs Billing Account Administrator on ${ba})"
     fi
   fi
   has billing.resourceAssociations.list "${granted}" \
     && pass "can list projects linked to the BA (needed for export auto-detect)" \
-    || warn "cannot list projects under the BA — pass --export-project explicitly on the day"
+    || warn "cannot list projects under the BA — init.sh will need --export-project, --detailed-usage-dataset and --pricing-dataset"
 
-  # Locate the Detailed Usage Cost export by its table name.
-  local table="gcp_billing_export_resource_v1_${ba//-/_}" proj="" ds="" p d
+  # Locate the Detailed Usage Cost export by its table name, the way init.sh does.
+  local table="gcp_billing_export_resource_v1_${ba//-/_}" proj="" ds="" pos="" hit p
   : >"${UNREAD_F}"
   if [[ -n "${EXPORT_PROJECT_ARG}" ]]; then
     proj="${EXPORT_PROJECT_ARG}"
-    for d in $(datasets_of "${proj}"); do
-      tables_of "${proj}" "${d}" | grep -qx "${table}" && { ds="$d"; break; }
-    done
+    hit=$(find_table "${proj}" "${table}") && read -r ds pos <<<"${hit}"
   else
     info "scanning the BA's projects for ${table} …"
     for p in $(gcloud billing projects list --billing-account="${ba}" --format='value(projectId)' 2>/dev/null); do
-      for d in $(datasets_of "${p}"); do
-        if tables_of "${p}" "${d}" | grep -qx "${table}"; then
-          proj="$p"; ds="$d"; break 2
-        fi
-      done
+      if hit=$(find_table "${p}" "${table}"); then
+        proj="${p}"; read -r ds pos <<<"${hit}"; break
+      fi
     done
   fi
   if [[ -z "${ds}" ]]; then
@@ -144,57 +165,90 @@ check_ba() {
     fi
     return
   fi
-  local meta
-  meta=$(bq show --format=json "${proj}:${ds}.${table}" 2>/dev/null)
-  pass "Detailed Usage Cost export → ${proj}:${ds} (rows ${meta:+$(jq -r '.numRows' <<<"${meta}")}, last modified $(jq -r '(.lastModifiedTime|tonumber/1000|todate)' <<<"${meta}" 2>/dev/null))"
-
-  local pds=""
-  for d in $(datasets_of "${proj}"); do
-    tables_of "${proj}" "${d}" | grep -qx cloud_pricing_export && { pds="$d"; break; }
-  done
-  if [[ -n "${pds}" ]]; then
-    pass "Pricing export → ${proj}:${pds}"
+  local rows
+  rows=$(rows_of "${proj}:${ds}.${table}")
+  if [[ -n "${rows}" && "${rows}" != "0" ]]; then
+    pass "Detailed Usage Cost export → ${proj}:${ds} (${rows} rows)"
   else
-    local cfg disabled
-    cfg=$(bq ls --transfer_config --transfer_location=us --project_id="${proj}" --format=json 2>/dev/null \
-      | jq -r '.[]? | select(.displayName | test("Pricing"; "i")) | .name' | head -1)
-    if [[ -n "${cfg}" ]]; then
-      disabled=$(bq show --format=json --transfer_config "${cfg}" 2>/dev/null | jq -r '.disabled // false')
-      [[ "${disabled}" == "true" ]] \
-        && fail "Pricing export is configured but its transfer is DISABLED — re-save it in Billing → Billing export → Pricing and complete the authorization prompt" \
-        || warn "Pricing transfer is enabled but no cloud_pricing_export table yet — first load can take up to 48 h"
+    fail "Detailed Usage Cost export ${proj}:${ds}.${table} has no rows yet — init.sh stops on an empty export. Re-run once data lands (up to 24 h after enabling)"
+  fi
+
+  local pds="" ppos=""
+  hit=$(find_table "${proj}" cloud_pricing_export) && read -r pds ppos <<<"${hit}"
+  if [[ -n "${pds}" ]]; then
+    rows=$(rows_of "${proj}:${pds}.cloud_pricing_export")
+    if [[ -n "${rows}" && "${rows}" != "0" ]]; then
+      pass "Pricing export → ${proj}:${pds} (${rows} rows)"
     else
-      fail "Pricing export not enabled in ${proj} — enable it in Billing → Billing export → BigQuery export → Pricing"
+      fail "Pricing export ${proj}:${pds}.cloud_pricing_export has no rows yet — init.sh stops on an empty Pricing table. Re-run once data lands (up to 48 h)"
+    fi
+  else
+    local cfgs cfg disabled
+    if ! cfgs=$(bq ls --transfer_config --transfer_location=us --project_id="${proj}" --format=json 2>/dev/null) \
+       || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"${cfgs:-[]}"; then
+      fail "Pricing export not found in ${proj}, and its transfer configs could not be read — enable Pricing in Billing → Billing export → BigQuery export"
+    else
+      cfg=$(jq -r '.[]? | select(.displayName | test("Pricing"; "i")) | .name' <<<"${cfgs:-[]}" | head -1)
+      if [[ -z "${cfg}" ]]; then
+        fail "Pricing export not enabled in ${proj} — enable it in Billing → Billing export → BigQuery export → Pricing"
+      else
+        disabled=$(bq show --format=json --transfer_config "${cfg}" 2>/dev/null | jq -r '.disabled // false' 2>/dev/null)
+        [[ "${disabled}" == "true" ]] \
+          && fail "Pricing export is configured but its transfer is DISABLED — re-save it in Billing → Billing export → Pricing and complete the authorization prompt" \
+          || fail "Pricing export is configured but has not delivered cloud_pricing_export yet (first load up to 48 h) — re-run this check later"
+      fi
     fi
   fi
 
-  TABLE="${table}" check_export_project "${proj}" "${ds}" "${pds}"
+  # init.sh's auto-detect only sees the first 50 datasets of the project.
+  local init_cmd="./init.sh --billing-account-id ${ba} --export-project ${proj} --detailed-usage-dataset ${ds} --pricing-dataset ${pds:-<pricing-dataset>}"
+  if [[ ${pos} -ge ${INIT_DATASET_LIMIT} || ${ppos:-0} -ge ${INIT_DATASET_LIMIT} ]]; then
+    warn "the export dataset sits beyond the first ${INIT_DATASET_LIMIT} datasets of ${proj}, so init.sh's auto-detect will miss it — run: ${init_cmd}"
+  else
+    info "if init.sh's auto-detect picks something else, pin it: ${init_cmd}"
+  fi
+
+  check_export_project "${proj}" "${ds}" "${pds}"
   check_scoping_project "${SCOPING_PROJECT_ARG:-${proj}}"
 }
 
 check_export_project() {
   local proj="$1" ds="$2" pds="$3"
   local granted out
-  granted=$(test_perms "https://cloudresourcemanager.googleapis.com/v1/projects/${proj}:testIamPermissions" \
-    bigquery.datasets.update)
 
-  # init.sh runs a freshness query in the export project; a dry run of the same query
-  # (free) proves bigquery.jobs.create there plus read access to the table.
-  if out=$(bq query --dry_run --use_legacy_sql=false --project_id="${proj}" \
-        "SELECT export_time FROM \`${proj}.${ds}.${TABLE}\` LIMIT 1" 2>&1); then
-    pass "can query the export in ${proj} (dry run of init.sh's freshness query)"
+  # Dry runs (free) of init.sh's two freshness queries prove bigquery.jobs.create in the
+  # export project plus read access to every table they touch.
+  dry_run() {
+    bq query --dry_run --use_legacy_sql=false --project_id="${proj}" "$1" 2>&1
+  }
+  short_err() { tr '\n' ' ' <<<"$1" | sed 's/.*in query operation: //' | cut -c1-220; }
+  if out=$(dry_run "SELECT MAX(export_time) FROM \`${proj}.${ds}.gcp_billing_export_resource_v1_*\`"); then
+    pass "can run init.sh's Detailed Usage Cost freshness query in ${proj} (dry run)"
   else
-    fail "cannot query the export in ${proj} — needs roles/bigquery.user on ${proj} + read on ${ds}: $(tr '\n' ' ' <<<"${out}" | sed 's/.*in query operation: //' | cut -c1-220)"
+    fail "cannot run init.sh's Detailed Usage Cost query in ${proj} — needs roles/bigquery.user on ${proj} + read on ${ds}: $(short_err "${out}")"
+  fi
+  if [[ -n "${pds}" ]]; then
+    if out=$(dry_run "SELECT COUNT(*) FROM \`${proj}.${pds}.cloud_pricing_export\`"); then
+      pass "can run init.sh's Pricing query in ${proj} (dry run)"
+    else
+      fail "cannot run init.sh's Pricing query in ${proj} — needs read on ${pds}: $(short_err "${out}")"
+    fi
   fi
 
-  # Granting READER on the datasets needs bigquery.datasets.update — project-level, or OWNER on the dataset itself.
-  local d
-  for d in ${ds} ${pds}; do
+  # Granting READER on a dataset needs bigquery.datasets.update — project-level, or OWNER on the dataset.
+  granted=$(test_perms "https://cloudresourcemanager.googleapis.com/v1/projects/${proj}:testIamPermissions" \
+    bigquery.datasets.update)
+  local d acl
+  for d in $(printf '%s\n' "${ds}" "${pds}" | awk 'NF && !seen[$0]++'); do
     if has bigquery.datasets.update "${granted}"; then
       pass "can grant LumiTure READER on ${proj}:${d}"
-    elif bq show --format=json "${proj}:${d}" 2>/dev/null \
-         | jq -e --arg me "${ME}" '[.access[]? | select(.role=="OWNER" and (.userByEmail // "" | ascii_downcase) == ($me|ascii_downcase))] | length > 0' >/dev/null; then
+      continue
+    fi
+    acl=$(bq show --format=json "${proj}:${d}" 2>/dev/null)
+    if jq -e --arg me "${ME}" '[.access[]? | select(.role=="OWNER" and ((.userByEmail // "") | ascii_downcase) == ($me|ascii_downcase))] | length > 0' >/dev/null 2>&1 <<<"${acl}"; then
       pass "can grant LumiTure READER on ${proj}:${d} (you are dataset OWNER)"
+    elif jq -e '[.access[]? | select(.role=="OWNER" and (.groupByEmail or .domain or .specialGroup or .iamMember))] | length > 0' >/dev/null 2>&1 <<<"${acl}"; then
+      warn "cannot confirm you can grant READER on ${proj}:${d} — dataset OWNER is held by a group/domain; confirm you are a member, or get roles/bigquery.dataOwner"
     else
       fail "cannot grant LumiTure READER on ${proj}:${d} — needs roles/bigquery.dataOwner (or bigquery.admin) on the dataset or project"
     fi
@@ -203,12 +257,15 @@ check_export_project() {
 
 check_scoping_project() {
   local proj="$1"
-  local granted
+  local granted msg
   granted=$(test_perms "https://cloudresourcemanager.googleapis.com/v1/projects/${proj}:testIamPermissions" \
-    resourcemanager.projects.setIamPolicy)
-  has resourcemanager.projects.setIamPolicy "${granted}" \
-    && pass "can grant roles/monitoring.viewer on scoping project ${proj} (usage / rightsizing)" \
-    || warn "cannot grant roles/monitoring.viewer on ${proj} (usage / rightsizing) — needs Project IAM Admin or Owner; billing still works without it"
+    resourcemanager.projects.getIamPolicy resourcemanager.projects.setIamPolicy)
+  if has resourcemanager.projects.setIamPolicy "${granted}" && has resourcemanager.projects.getIamPolicy "${granted}"; then
+    pass "can grant roles/monitoring.viewer on scoping project ${proj} (usage / rightsizing)"
+    return
+  fi
+  msg="cannot grant roles/monitoring.viewer on ${proj} (usage / rightsizing) — needs Project IAM Admin or Owner"
+  if [[ ${WITH_USAGE} -eq 1 ]]; then fail "${msg}"; else warn "${msg}; billing works without it"; fi
 }
 
 for ba in "${BAS[@]}"; do check_ba "${ba}"; done
