@@ -43,18 +43,18 @@ Every other argument defaults correctly for production: **subscription** = your 
 
 ## Before the session — permission check
 
-Run this a few days ahead in Azure Cloud Shell (Bash), **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means `init.sh` should not stop on a consent or permission problem for those subscriptions, so a missing role gets fixed before the session instead of during it. Complete admin consent first (it is checked too), and if your role comes from PIM, activate it before running.
+Run this a few days ahead in Azure Cloud Shell (Bash), **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means none of the consent or permission prerequisites it checks is missing, so a missing role gets fixed before the session instead of during it. Anything it cannot verify (for example role-assignment rights granted only through a conditional assignment) counts as `NOT READY`. Complete admin consent first (it is checked too), and if your role comes from PIM, activate it before running.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
 bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...]     # add --no-usage for billing-only
 ```
 
-It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. Permissions are evaluated at subscription scope from your role assignments; deny assignments and grants that exist only on a resource group are not evaluated.
+It ends with `READY` or `NOT READY`; each `FAIL` line says what is missing or what to do. Permissions are evaluated at subscription scope from your role assignments; deny assignments and grants that exist only on a resource group are not evaluated.
 
 Good to know before running it:
 - Azure Policy is not evaluated: a policy such as allowed locations (`init.sh` creates storage in `eastasia` by default) or "no public storage accounts" can still block `init.sh`. Check with your Azure admin if your tenant enforces such policies.
-- Your Activity Log / Entra sign-in logs will show the read calls it makes under your identity (permissions list, provider reads, one Cost Management query per subscription) — expected, nothing is written.
+- Your Activity Log / Entra sign-in logs will show the read calls it makes under your identity (permissions list, provider reads, up to two Cost Management queries per subscription) — expected, nothing is written.
 - Don't run it with `bash -x`: tracing can print access tokens, so that output must never be shared.
 
 ## What's in this directory

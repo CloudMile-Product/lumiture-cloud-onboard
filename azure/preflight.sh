@@ -79,6 +79,37 @@ JQ_ALLOWED='
   . as $perms | $want | map(. as $w | {(.): ([$perms.value[] | select((any(.actions[]; m($w))) and (any((.notActions // [])[]; m($w)) | not))] | length > 0)}) | add
 '
 
+# Role-assignment rights that come only from a CONDITIONAL assignment (delegation limited to
+# certain roles or principals) can't be evaluated here, so they must not count as READY.
+# The permissions API omits conditions, so read the caller's role assignments directly.
+check_unconditional_delegation() {
+  local sub="$1" me_id asg defs='[]' rid def
+  if ! me_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null) || [[ -z "${me_id}" ]] \
+     || ! asg=$(az rest --method get -o json \
+          --url "${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/roleAssignments?\$filter=assignedTo('${me_id}')&api-version=2022-04-01" 2>/dev/null); then
+    fail "could not read your role assignments to confirm your role-assignment rights are unconditional — ask LumiTure to verify by hand"
+    return
+  fi
+  # Only assignments that apply at the subscription: its own scope, a management group, or root.
+  asg=$(jq -c --arg sub "/subscriptions/${sub}" '{value: [.value[] | select((.properties.scope | ascii_downcase) as $s
+        | $s == ($sub | ascii_downcase) or $s == "/" or ($s | startswith("/providers/microsoft.management/")))]}' <<<"${asg}")
+  # Each assignment's role-definition permissions, tagged conditional or not.
+  for rid in $(jq -r '[.value[].properties.roleDefinitionId] | unique | .[]' <<<"${asg}"); do
+    def=$(az rest --method get -o json --url "${ARM}${rid}?api-version=2022-04-01" 2>/dev/null) || continue
+    defs=$(jq -c --arg id "${rid}" --argjson d "${def}" '. + [{id: $id, permissions: ($d.properties.permissions // [])}]' <<<"${defs}")
+  done
+  local uncond cond want='["Microsoft.Authorization/roleAssignments/write"]'
+  uncond=$(jq -c --argjson defs "${defs}" '{value: [.value[] | select(.properties.condition == null) | .properties.roleDefinitionId as $r | ($defs[] | select(.id == $r) | .permissions[])]}' <<<"${asg}")
+  cond=$(jq -c --argjson defs "${defs}" '{value: [.value[] | select(.properties.condition != null) | .properties.roleDefinitionId as $r | ($defs[] | select(.id == $r) | .permissions[])]}' <<<"${asg}")
+  if [[ "$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${uncond}" | jq -r '.[]')" == "true" ]]; then
+    pass "can assign roles to LumiTure (roleAssignments/write, unconditional)"
+  elif [[ "$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${cond}" | jq -r '.[]')" == "true" ]]; then
+    fail "your right to assign roles comes from a conditional assignment (limited to certain roles/principals), which this check can't evaluate — init.sh must assign Cost Management Reader, Storage Blob Data Reader, Storage Blob Data Contributor and a custom role to LumiTure's identities; get an unconditional Owner or User Access Administrator, or confirm the condition allows those"
+  else
+    fail "could not confirm where your role-assignment rights come from (group or management-group assignment not resolvable here) — ask LumiTure to verify by hand"
+  fi
+}
+
 check_sub() {
   local sub="$1"
   CUR="sub ${sub}"
@@ -113,9 +144,11 @@ check_sub() {
     perms=$(jq -c --argjson p "${page}" '. + ($p.value // [])' <<<"${perms}")
     url=$(jq -r '.nextLink // empty' <<<"${page}")
   done
+  if [[ -n "${url}" ]]; then
+    fail "your permission list on this subscription has more than 20 pages; the check is incomplete — ask LumiTure to verify by hand"
+    return
+  fi
   perms=$(jq -c '{value: .}' <<<"${perms}")
-  jq -e '[.value[] | select(.condition != null)] | length > 0' >/dev/null 2>&1 <<<"${perms}" \
-    && warn "some of your role assignments carry conditions (e.g. limits on which roles you may assign) — this check cannot evaluate them"
 
   local want='["Microsoft.Authorization/roleAssignments/write",
     "Microsoft.Resources/subscriptions/resourceGroups/write",
@@ -136,15 +169,16 @@ check_sub() {
   res=$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${perms}")
   ok_action() { [[ "$(jq -r --arg a "$1" '.[$a]' <<<"${res}")" == "true" ]]; }
 
-  ok_action Microsoft.Authorization/roleAssignments/write \
-    && pass "can assign roles to LumiTure (roleAssignments/write)" \
-    || fail "cannot assign roles — needs Owner, or User Access Administrator + Contributor, on the subscription"
+  if ok_action Microsoft.Authorization/roleAssignments/write; then
+    check_unconditional_delegation "${sub}"
+  else
+    fail "cannot assign roles — needs Owner, or User Access Administrator + Contributor, on the subscription"
+  fi
 
   local a missing=""
   for a in Microsoft.Resources/subscriptions/resourceGroups/write \
            Microsoft.Storage/storageAccounts/write \
            Microsoft.Storage/storageAccounts/blobServices/containers/write \
-           Microsoft.Storage/storageAccounts/managementPolicies/write \
            Microsoft.CostManagement/exports/write \
            Microsoft.EventGrid/eventSubscriptions/write \
            Microsoft.Authorization/roleAssignments/read \
@@ -157,6 +191,9 @@ check_sub() {
   [[ -z "${missing}" ]] \
     && pass "can create and verify the export storage, Cost Management exports and Event Grid subscription" \
     || fail "missing:${missing} — needs Contributor (or Owner) on the subscription"
+  # init.sh treats a failed lifecycle rule as non-fatal, so this only warns.
+  ok_action Microsoft.Storage/storageAccounts/managementPolicies/write \
+    || warn "cannot set the export blob lifecycle rule (managementPolicies/write) — init.sh continues without it; use --no-retention to skip it"
 
   if [[ ${WITH_USAGE} -eq 1 ]]; then
     ok_action Microsoft.Authorization/roleDefinitions/write \

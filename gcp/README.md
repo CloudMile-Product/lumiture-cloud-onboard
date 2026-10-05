@@ -24,16 +24,17 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 
 ## Before the session — permission check
 
-Run this a few days ahead, **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means `init.sh` should not stop on a permission or export problem for those billing accounts, so a missing grant gets fixed before the session instead of during it. Add `--with-usage` if usage / rightsizing will be onboarded too.
+Run this a few days ahead, **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means none of the prerequisites it checks is missing, so a missing grant gets fixed before the session instead of during it. Anything it cannot verify counts as `NOT READY`. Add `--with-usage` if usage / rightsizing will be onboarded too.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
 bash preflight.sh <BILLING_ACCOUNT_ID> [<BILLING_ACCOUNT_ID> ...]
 ```
 
-It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. An export enabled less than a day ago shows `NOT READY` until its first data lands, because `init.sh` stops on an empty export. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
+It ends with `READY` or `NOT READY`; each `FAIL` line says what is missing or what to do. An export enabled less than a day ago shows `NOT READY` until its first data lands, because `init.sh` stops on an empty export. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
 
 Good to know before running it:
+- Not evaluated: organization policies (for example domain-restricted sharing, which can block granting LumiTure's service account from outside your organization), VPC Service Controls, and BigQuery fine-grained dataset ACL enforcement. If your organization uses these, check with your GCP admin.
 - Your Cloud Audit Logs will show the read calls it makes under your identity (`testIamPermissions`, `getIamPolicy`, dataset listings, BigQuery dry runs) — expected, nothing is written.
 - On an account with many projects, the export scan lists every project's datasets and can take a while; pass `--export-project <id>` to skip it.
 - Don't run it with `bash -x`: tracing prints your access token, so that output must never be shared.
