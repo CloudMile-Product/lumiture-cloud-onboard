@@ -25,6 +25,11 @@ bash preflight.sh <帳單帳戶 ID> [<帳單帳戶 ID> ...]
 
 結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。匯出啟用未滿一天、尚無資料時會顯示 `NOT READY`（`init.sh` 遇到空的匯出會中止），待資料進來後再執行一次即可。若帳單帳戶是透過經銷商購買，腳本會列出經銷商的母帳戶——帳單管理員通常在經銷商端，可能需請經銷商代為授予 `roles/billing.viewer`。
 
+執行前須知：
+- 貴公司的 Cloud Audit Logs 會以您的身分記錄這些讀取呼叫（`testIamPermissions`、`getIamPolicy`、資料集列表、BigQuery dry run）——屬預期行為，不會寫入任何資料。
+- 若帳單帳戶下專案很多，自動掃描會逐一列出各專案的資料集，可能需要較長時間；可加上 `--export-project <專案 ID>` 略過掃描。
+- 請勿以 `bash -x` 執行：除錯追蹤會印出您的存取權杖，該輸出不可分享給任何人。
+
 ## 必要權限
 
 | 角色 | 授予範圍 | 用途 | 必要性 |

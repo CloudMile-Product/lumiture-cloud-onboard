@@ -16,6 +16,8 @@
 # Exit code: 0 = all required checks passed, 1 = at least one FAIL.
 
 set -uo pipefail
+# Never let gcloud stop on an interactive prompt (e.g. "enable this API?"); take the default, No.
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 readonly LUMITURE_SA="lumiture-client@tw-rd-app-finops-prod.iam.gserviceaccount.com"
 # init.sh lists datasets without --max_results, so bq returns only the first 50.
@@ -45,6 +47,8 @@ done
 [[ ${#BAS[@]} -gt 0 ]] || usage 2
 
 for t in gcloud bq jq curl; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
+# First bq run in a fresh shell prints a welcome banner on stdout; get it out of the way.
+bq version >/dev/null 2>&1
 
 ME=$(gcloud config get-value account 2>/dev/null)
 TOK=$(gcloud auth print-access-token 2>/dev/null)
@@ -61,29 +65,41 @@ else
 fi
 
 # POST <url> testIamPermissions with the given permissions; prints the granted ones.
+# An API error is shown on stderr so it isn't mistaken for a missing permission.
 test_perms() {
   local url="$1"; shift
-  local body
+  local body resp
   body=$(jq -cn '{permissions: $ARGS.positional}' --args "$@")
-  curl -s -X POST "${url}" -H "Authorization: Bearer ${TOK}" \
-    -H "Content-Type: application/json" -d "${body}" | jq -r '.permissions[]?' 2>/dev/null
+  resp=$(curl -s --max-time 30 -X POST "${url}" -H "Authorization: Bearer ${TOK}" \
+    -H "Content-Type: application/json" -d "${body}")
+  if jq -e '.error' >/dev/null 2>&1 <<<"${resp}"; then
+    printf "  %b %s\n" "${c_ylw}note${c_off}" "permission check API error: $(jq -r '.error.message' <<<"${resp}" | cut -c1-200)" >&2
+  elif [[ -z "${resp}" ]]; then
+    printf "  %b %s\n" "${c_ylw}note${c_off}" "permission check got no response (network timeout?) — re-run this check" >&2
+  fi
+  jq -r '.permissions[]?' 2>/dev/null <<<"${resp}"
 }
 has() { grep -qx "$1" <<<"$2"; }
 
 # bq ls as JSON. Empty project or BigQuery API off → empty list; any other error → return 1.
 UNREAD_F=$(mktemp); trap 'rm -f "${UNREAD_F}"' EXIT
+# Drops anything bq prints before its JSON (banners, "WARNING: Could not setup log file").
+json_only() { sed -n '/^[{[]/,$p'; }
 bq_ls_json() {
-  local out
-  out=$(bq ls --format=json --max_results=1000 "$@" 2>/dev/null)
-  case "${out}" in
-    \[*|\{*) printf '%s' "${out}" ;;
-    ""|*"has not enabled BigQuery"*) printf '[]' ;;
-    *) echo x >>"${UNREAD_F}"; printf '[]'; return 1 ;;
-  esac
+  local raw out
+  raw=$(bq ls --format=json --max_results=1000 "$@" 2>/dev/null)
+  out=$(json_only <<<"${raw}")
+  if [[ -n "${out}" ]]; then
+    printf '%s' "${out}"
+  elif [[ -z "${raw}" || "$(tr '\n' ' ' <<<"${raw}" | tr -s ' ')" == *"has not enabled BigQuery"* ]]; then
+    printf '[]'
+  else
+    echo x >>"${UNREAD_F}"; printf '[]'; return 1
+  fi
 }
 datasets_of() { bq_ls_json --project_id="$1" | jq -r '.[]?.datasetReference.datasetId'; }
 tables_of()   { bq_ls_json "$1:$2" | jq -r '.[]?.tableReference.tableId'; }
-rows_of()     { bq show --format=json "$1" 2>/dev/null | jq -r '.numRows // empty' 2>/dev/null; }
+rows_of()     { bq show --format=json "$1" 2>/dev/null | json_only | jq -r '.numRows // empty' 2>/dev/null; }
 
 # Finds the dataset in <project> holding <table>; prints "<dataset> <0-based position>".
 find_table() {
@@ -106,6 +122,10 @@ check_ba() {
     return
   fi
   info "name: $(jq -r '.displayName' <<<"${desc}") · open: $(jq -r '.open' <<<"${desc}")"
+  if [[ "$(jq -r '.open' <<<"${desc}")" != "true" ]]; then
+    fail "billing account ${ba} is CLOSED — it exports no new data, so init.sh cannot connect it"
+    return
+  fi
   local parent
   parent=$(jq -r '.masterBillingAccount // empty' <<<"${desc}")
   parent="${parent#billingAccounts/}"
@@ -148,12 +168,17 @@ check_ba() {
     proj="${EXPORT_PROJECT_ARG}"
     hit=$(find_table "${proj}" "${table}") && read -r ds pos <<<"${hit}"
   else
-    info "scanning the BA's projects for ${table} …"
-    for p in $(gcloud billing projects list --billing-account="${ba}" --format='value(projectId)' 2>/dev/null); do
+    local projects n=0 total
+    projects=$(gcloud billing projects list --billing-account="${ba}" --format='value(projectId)' 2>/dev/null)
+    total=$(wc -w <<<"${projects}" | tr -d ' ')
+    info "scanning ${total} project(s) under the BA for ${table} (large accounts: pass --export-project to skip this) …"
+    for p in ${projects}; do
+      n=$((n+1)); printf "\r  … %d/%d %s\033[K" "${n}" "${total}" "${p}" >&2
       if hit=$(find_table "${p}" "${table}"); then
         proj="${p}"; read -r ds pos <<<"${hit}"; break
       fi
     done
+    [[ ${total} -gt 0 ]] && printf "\r\033[K" >&2
   fi
   if [[ -z "${ds}" ]]; then
     local unreadable
@@ -184,7 +209,7 @@ check_ba() {
     fi
   else
     local cfgs cfg disabled
-    if ! cfgs=$(bq ls --transfer_config --transfer_location=us --project_id="${proj}" --format=json 2>/dev/null) \
+    if ! cfgs=$(bq ls --transfer_config --transfer_location=us --project_id="${proj}" --format=json 2>/dev/null | json_only) \
        || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"${cfgs:-[]}"; then
       fail "Pricing export not found in ${proj}, and its transfer configs could not be read — enable Pricing in Billing → Billing export → BigQuery export"
     else
@@ -192,7 +217,7 @@ check_ba() {
       if [[ -z "${cfg}" ]]; then
         fail "Pricing export not enabled in ${proj} — enable it in Billing → Billing export → BigQuery export → Pricing"
       else
-        disabled=$(bq show --format=json --transfer_config "${cfg}" 2>/dev/null | jq -r '.disabled // false' 2>/dev/null)
+        disabled=$(bq show --format=json --transfer_config "${cfg}" 2>/dev/null | json_only | jq -r '.disabled // false' 2>/dev/null)
         [[ "${disabled}" == "true" ]] \
           && fail "Pricing export is configured but its transfer is DISABLED — re-save it in Billing → Billing export → Pricing and complete the authorization prompt" \
           || fail "Pricing export is configured but has not delivered cloud_pricing_export yet (first load up to 48 h) — re-run this check later"
@@ -244,7 +269,7 @@ check_export_project() {
       pass "can grant LumiTure READER on ${proj}:${d}"
       continue
     fi
-    acl=$(bq show --format=json "${proj}:${d}" 2>/dev/null)
+    acl=$(bq show --format=json "${proj}:${d}" 2>/dev/null | json_only)
     if jq -e --arg me "${ME}" '[.access[]? | select(.role=="OWNER" and ((.userByEmail // "") | ascii_downcase) == ($me|ascii_downcase))] | length > 0' >/dev/null 2>&1 <<<"${acl}"; then
       pass "can grant LumiTure READER on ${proj}:${d} (you are dataset OWNER)"
     elif jq -e '[.access[]? | select(.role=="OWNER" and (.groupByEmail or .domain or .specialGroup or .iamMember))] | length > 0' >/dev/null 2>&1 <<<"${acl}"; then

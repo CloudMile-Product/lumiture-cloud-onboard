@@ -33,6 +33,11 @@ bash preflight.sh <BILLING_ACCOUNT_ID> [<BILLING_ACCOUNT_ID> ...]
 
 It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. An export enabled less than a day ago shows `NOT READY` until its first data lands, because `init.sh` stops on an empty export. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
 
+Good to know before running it:
+- Your Cloud Audit Logs will show the read calls it makes under your identity (`testIamPermissions`, `getIamPolicy`, dataset listings, BigQuery dry runs) — expected, nothing is written.
+- On an account with many projects, the export scan lists every project's datasets and can take a while; pass `--export-project <id>` to skip it.
+- Don't run it with `bash -x`: tracing prints your access token, so that output must never be shared.
+
 ## What it does
 
 1. Discovers the customer's Cloud Billing Account and BigQuery export dataset

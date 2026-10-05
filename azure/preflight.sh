@@ -7,7 +7,8 @@
 # session instead of halfway through it.
 #
 # Checked at subscription scope from your role assignments. Not evaluated: deny
-# assignments, and grants that exist only on a resource group or resource.
+# assignments, grants that exist only on a resource group or resource, and Azure
+# Policy (e.g. allowed locations, no public storage) that can block init.sh's writes.
 #
 # If your role comes from PIM (Privileged Identity Management), ACTIVATE it first —
 # an eligible-but-inactive role does not count, here or on the day.
@@ -44,7 +45,7 @@ done
 [[ ${#SUBS[@]} -gt 0 ]] || { sed -n '2,21p' "$0"; exit 2; }
 for t in az jq; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
 
-ACCT=$(az account show -o json 2>/dev/null) || { echo "No active az login — run 'az login' first" >&2; exit 2; }
+ACCT=$(az account show -o json 2>/dev/null) || { echo "No active az login — run 'az login' first (or 'az login --allow-no-subscriptions' if this account has no subscriptions yet)" >&2; exit 2; }
 ME=$(jq -r '.user.name' <<<"${ACCT}")
 TENANT=$(jq -r '.tenantId' <<<"${ACCT}")
 
@@ -54,14 +55,17 @@ info "Checking as: ${ME}"
 info "This must be the person who will run the onboarding on the day."
 
 # Admin consent: either LumiTure's SP is already in the tenant, or this login can consent.
-if az ad sp show --id "${LUMITURE_APP_ID}" --query id -o tsv >/dev/null 2>&1; then
+if sperr=$(az ad sp show --id "${LUMITURE_APP_ID}" --query id -o tsv 2>&1 >/dev/null); then
   pass "LumiTure app is already consented in this tenant"
+elif ! grep -qiE "does not exist|doesn't exist|not found" <<<"${sperr}"; then
+  fail "could not check whether LumiTure is consented (cannot read the directory: $(grep -v '^WARNING' <<<"${sperr}" | head -1 | cut -c1-160)) — have a directory admin confirm, then re-run"
 else
+  # Transitive, so a role held through a role-assignable group counts.
   roles=$(az rest --method get \
-    --url 'https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole?$select=displayName' \
+    --url 'https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName' \
     --query 'value[].displayName' -o tsv 2>/dev/null)
-  if grep -qx "Global Administrator" <<<"${roles}"; then
-    warn "LumiTure app not consented yet — init.sh stops until it is. You are Global Administrator: click 'Connect Azure' in the LumiTure wizard and Accept, then re-run this check"
+  if grep -qxE "Global Administrator|Privileged Role Administrator" <<<"${roles}"; then
+    fail "LumiTure app not consented yet — init.sh stops until it is. Your role ($(grep -xE 'Global Administrator|Privileged Role Administrator' <<<"${roles}" | head -1)) can consent: click 'Connect Azure' in the LumiTure wizard and Accept, then re-run this check"
   else
     fail "LumiTure app not consented yet — init.sh stops until it is. Ask a Global Administrator to click 'Connect Azure' in the LumiTure wizard and Accept, then re-run this check"
   fi
@@ -89,14 +93,19 @@ check_sub() {
   stenant=$(jq -r '.tenantId // empty' <<<"${s}")
   quota=$(jq -r '.subscriptionPolicies.quotaId' <<<"${s}")
   info "name: $(jq -r '.displayName' <<<"${s}") · state: $(jq -r '.state' <<<"${s}") · offer: ${quota}"
+  if [[ "$(jq -r '.state' <<<"${s}")" != "Enabled" ]]; then
+    fail "subscription is $(jq -r '.state' <<<"${s}"), not Enabled — init.sh's writes will fail; re-enable it first"
+    return
+  fi
   if [[ -n "${stenant}" && "${stenant}" != "${TENANT}" ]]; then
     fail "subscription is in tenant ${stenant}, but you are signed in to ${TENANT} — run: az login --tenant ${stenant}"
     return
   fi
   [[ "${quota}" == CSP_* ]] && info "CSP subscription — bought through a Microsoft partner (reseller)"
 
-  local perms='[]' page url="${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01"
-  while [[ -n "${url}" ]]; do
+  local perms='[]' page pages=0 url="${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01"
+  while [[ -n "${url}" && ${pages} -lt 20 ]]; do
+    pages=$((pages+1))
     if ! page=$(az rest --method get --url "${url}" -o json 2>/dev/null); then
       fail "could not read your effective permissions on this subscription"
       return
@@ -179,7 +188,7 @@ check_sub() {
     [[ ${i} -eq 1 ]] && sleep 5
   done
   if jq -e '.properties.rows' >/dev/null 2>&1 <<<"${q}"; then
-    pass "can read Cost Management data (month-to-date: $(jq -r '.properties.rows[0] | "\(.[0]) \(.[1] // "")"' <<<"${q}"))"
+    pass "can read Cost Management data"
   else
     local why
     why=$(grep -v '^WARNING' "${qerr}" | tr '\n' ' ' | cut -c1-200)
