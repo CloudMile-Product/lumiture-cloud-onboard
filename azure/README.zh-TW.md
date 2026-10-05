@@ -66,11 +66,23 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 | **完整 FinOps（預設）** | 上表全部角色 + 建立 FOCUS 格式匯出 | 需同時評估成本與 Rightsizing |
 | **最小權限（`--no-usage --no-focus`）** | 僅 `Cost Management Reader` + `Storage Blob Data Reader` + ActualCost 匯出 | 資安審查優先、POC 僅需成本可視化 |
 
+## 介接前權限檢查
+
+請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Azure Cloud Shell（Bash）執行。此腳本**僅讀取、不做任何變更**，確認管理員同意狀態，以及 `init.sh` 在每個訂用帳戶上所需的權限。若角色來自 PIM，請先啟用。
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
+bash preflight.sh <訂用帳戶 ID> [<訂用帳戶 ID> ...]     # 僅介接帳單時加上 --no-usage
+```
+
+結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。
+
 ## 本目錄檔案
 
 | 檔案 | 用途 |
 |---|---|
 | `init.sh` | **主腳本（請執行此檔）**——同意檢查 + RBAC 授權 + 成本匯出 + Event Grid 訂閱 + 結構自檢 + 表單值輸出 |
+| `preflight.sh` | 介接前唯讀權限檢查（見上方） |
 | `tutorial.md` | Cloud Shell 側欄逐步導覽（**非必要步驟**） |
 | `bicep/` | Bicep 模組——宣告式替代方案（相同角色授權 + 匯出）。見 `bicep/README.md`。 |
 

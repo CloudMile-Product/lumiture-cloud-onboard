@@ -41,11 +41,23 @@ Every other argument defaults correctly for production: **subscription** = your 
 
 4. Enter the printed form values into the [LumiTure wizard](https://app.lumiture.ai/authorization/billing-integration/azure) to finish.
 
+## Before the session — permission check
+
+Run this a few days ahead in Azure Cloud Shell (Bash), **as the person who will run the onboarding**. It is read-only and changes nothing. It checks admin consent plus every permission `init.sh` needs on each subscription, so a missing role gets fixed before the session instead of during it. If your role comes from PIM, activate it first.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
+bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...]     # add --no-usage for billing-only
+```
+
+It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role.
+
 ## What's in this directory
 
 | File | Purpose |
 |---|---|
 | `init.sh` | **The onboarding script — run this.** Consent pre-flight + RBAC grants + cost export + Event Grid subscription + structural self-check + form-value output |
+| `preflight.sh` | Read-only permission check to run before the session (see above) |
 | `tutorial.md` | Step-by-step Cloud Shell walkthrough (**optional** — `init.sh` is self-contained; read this only if you want each phase explained) |
 | `bicep/` | Bicep module — declarative alternative (same role grants + export + Event Grid). See `bicep/README.md`. |
 
