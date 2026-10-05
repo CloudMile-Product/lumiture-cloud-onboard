@@ -17,9 +17,21 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 | `tutorial.md` | Step-by-step walkthrough Cloud Shell renders in a side panel |
 | `onboard-wrapper.sh` | Interactive bash wrapper the customer runs in the tutorial |
 | `init.sh` | Underlying onboarding script (discovery + IAM grant + form-value output) |
+| `preflight.sh` | Read-only permission check to run before the session (see below) |
 | `terraform/` | Terraform module — declarative alternative to the bash flow (same IAM grant + optional auto-submit). See `terraform/README.md` and `terraform/examples/`. |
 
 **Two ways to run the grant:** the **bash / Cloud Shell** flow above (zero-install, customer-driven) or the **Terraform module** in `terraform/` (for teams that prefer IaC / repeatable applies). Both grant the same two roles and emit the same wizard form values.
+
+## Before the session — permission check
+
+Run this a few days ahead, **as the person who will run the onboarding**. It is read-only and changes nothing. It checks every permission `init.sh` needs on each billing account, so a missing grant gets fixed before the session instead of during it.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
+bash preflight.sh <BILLING_ACCOUNT_ID> [<BILLING_ACCOUNT_ID> ...]
+```
+
+It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
 
 ## What it does
 

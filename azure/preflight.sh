@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# LumiTure Azure pre-session check — READ-ONLY, changes nothing.
+#
+# Run in Azure Cloud Shell (Bash) as the SAME person who will drive the onboarding
+# session. It asserts that this login holds every permission azure/init.sh needs,
+# per subscription, so a missing role is found days before the session instead
+# of halfway through it.
+#
+# If your role comes from PIM (Privileged Identity Management), ACTIVATE it first —
+# an eligible-but-inactive role does not count, here or on the day.
+#
+# Usage:
+#   bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...] [--no-usage]
+#
+#   --no-usage   billing only; don't require the custom-role permission for usage / rightsizing
+#
+# Exit code: 0 = all required checks passed, 1 = at least one FAIL.
+
+set -uo pipefail
+
+readonly LUMITURE_APP_ID="c871cf6f-dd8d-487a-a908-a66245655b0e"
+readonly ARM="https://management.azure.com"
+
+c_red='\033[0;31m'; c_grn='\033[0;32m'; c_ylw='\033[0;33m'; c_blu='\033[0;34m'; c_off='\033[0m'
+FAILS=0; WARNS=0; SUMMARY=""
+pass() { printf "  %b %s\n" "${c_grn}PASS${c_off}" "$*"; }
+fail() { printf "  %b %s\n" "${c_red}FAIL${c_off}" "$*"; FAILS=$((FAILS+1)); SUMMARY="${SUMMARY}FAIL  ${CUR}: $*\n"; }
+warn() { printf "  %b %s\n" "${c_ylw}WARN${c_off}" "$*"; WARNS=$((WARNS+1)); SUMMARY="${SUMMARY}WARN  ${CUR}: $*\n"; }
+info() { printf "  %b %s\n" "${c_blu}info${c_off}" "$*"; }
+hdr()  { printf "\n%b\n" "${c_blu}== $* ==${c_off}"; }
+
+SUBS=(); WITH_USAGE=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-usage) WITH_USAGE=0; shift ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; exit 2 ;;
+    *) SUBS+=("$1"); shift ;;
+  esac
+done
+[[ ${#SUBS[@]} -gt 0 ]] || { sed -n '2,18p' "$0"; exit 2; }
+for t in az jq; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
+
+ACCT=$(az account show -o json 2>/dev/null) || { echo "No active az login — run 'az login' first" >&2; exit 2; }
+ME=$(jq -r '.user.name' <<<"${ACCT}")
+TENANT=$(jq -r '.tenantId' <<<"${ACCT}")
+
+CUR="tenant"
+hdr "Login / tenant ${TENANT}"
+info "Checking as: ${ME}"
+info "This must be the person who will run the onboarding on the day."
+
+# Admin consent: either LumiTure's SP is already in the tenant, or this login can consent.
+if az ad sp show --id "${LUMITURE_APP_ID}" --query id -o tsv >/dev/null 2>&1; then
+  pass "LumiTure app is already consented in this tenant"
+else
+  roles=$(az rest --method get \
+    --url 'https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole?$select=displayName' \
+    --query 'value[].displayName' -o tsv 2>/dev/null)
+  if grep -qx "Global Administrator" <<<"${roles}"; then
+    pass "LumiTure app not consented yet, but you are Global Administrator and can consent in the session"
+  elif grep -qxE "Privileged Role Administrator|Cloud Application Administrator|Application Administrator" <<<"${roles}"; then
+    warn "LumiTure app not consented yet; your role ($(grep -xE 'Privileged Role Administrator|Cloud Application Administrator|Application Administrator' <<<"${roles}" | head -1)) can usually consent — safest is to click 'Connect Azure' in the LumiTure wizard now and Accept, before the session"
+  else
+    fail "LumiTure app not consented, and this login has no admin role that can consent. Ask a Global Administrator to click 'Connect Azure' in the LumiTure wizard and Accept, before the session"
+  fi
+fi
+
+# Effective permission check against the caller's own role assignments
+# (union of each assignment's actions minus its notActions; wildcards honoured).
+JQ_ALLOWED='
+  def re: "^" + (gsub("\\.";"\\.") | gsub("\\*";".*")) + "$";
+  def m($a): . as $p | $a | test($p|re; "i");
+  . as $perms | $want | map(. as $w | {(.): ([$perms.value[] | select((any(.actions[]; m($w))) and (any((.notActions // [])[]; m($w)) | not))] | length > 0)}) | add
+'
+
+check_sub() {
+  local sub="$1"
+  CUR="sub ${sub}"
+  hdr "Subscription ${sub}"
+
+  local s
+  if ! s=$(az rest --method get --url "${ARM}/subscriptions/${sub}?api-version=2022-12-01" -o json 2>/dev/null); then
+    fail "subscription not visible to this login (wrong ID, wrong tenant, or no role on it)"
+    return
+  fi
+  local stenant quota
+  stenant=$(jq -r '.tenantId // empty' <<<"${s}")
+  quota=$(jq -r '.subscriptionPolicies.quotaId' <<<"${s}")
+  info "name: $(jq -r '.displayName' <<<"${s}") · state: $(jq -r '.state' <<<"${s}") · offer: ${quota}"
+  if [[ -n "${stenant}" && "${stenant}" != "${TENANT}" ]]; then
+    fail "subscription is in tenant ${stenant}, but you are signed in to ${TENANT} — run: az login --tenant ${stenant}"
+    return
+  fi
+  [[ "${quota}" == CSP_* ]] && info "CSP subscription — bought through a Microsoft partner (reseller)"
+
+  local perms
+  if ! perms=$(az rest --method get --url "${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01" -o json 2>/dev/null); then
+    fail "could not read your effective permissions on this subscription"
+    return
+  fi
+
+  local want='["Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Resources/subscriptions/resourceGroups/write",
+    "Microsoft.Storage/storageAccounts/write",
+    "Microsoft.Storage/storageAccounts/blobServices/containers/write",
+    "Microsoft.Storage/storageAccounts/managementPolicies/write",
+    "Microsoft.CostManagement/exports/write",
+    "Microsoft.EventGrid/eventSubscriptions/write",
+    "Microsoft.Authorization/roleDefinitions/write",
+    "Microsoft.CostManagementExports/register/action",
+    "Microsoft.EventGrid/register/action"]'
+  local res
+  res=$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${perms}")
+  ok_action() { [[ "$(jq -r --arg a "$1" '.[$a]' <<<"${res}")" == "true" ]]; }
+
+  ok_action Microsoft.Authorization/roleAssignments/write \
+    && pass "can assign roles to LumiTure (roleAssignments/write)" \
+    || fail "cannot assign roles — needs Owner, or User Access Administrator + Contributor, on the subscription"
+
+  local a missing=""
+  for a in Microsoft.Resources/subscriptions/resourceGroups/write \
+           Microsoft.Storage/storageAccounts/write \
+           Microsoft.Storage/storageAccounts/blobServices/containers/write \
+           Microsoft.Storage/storageAccounts/managementPolicies/write \
+           Microsoft.CostManagement/exports/write \
+           Microsoft.EventGrid/eventSubscriptions/write; do
+    ok_action "$a" || missing="${missing} ${a}"
+  done
+  [[ -z "${missing}" ]] \
+    && pass "can create the export storage, Cost Management exports and Event Grid subscription" \
+    || fail "missing:${missing} — needs Contributor (or Owner) on the subscription"
+
+  if [[ ${WITH_USAGE} -eq 1 ]]; then
+    ok_action Microsoft.Authorization/roleDefinitions/write \
+      && pass "can create the LumiTure usage custom role (rightsizing)" \
+      || fail "cannot create the usage custom role (roleDefinitions/write) — needs Owner or User Access Administrator; or onboard with --no-usage"
+  fi
+
+  local ns state
+  for ns in Microsoft.CostManagementExports Microsoft.EventGrid; do
+    state=$(az provider show -n "${ns}" --subscription "${sub}" --query registrationState -o tsv 2>/dev/null)
+    if [[ "${state}" == "Registered" ]]; then
+      pass "resource provider ${ns} already registered"
+    elif ok_action "${ns}/register/action"; then
+      pass "resource provider ${ns} is ${state:-unknown}; you can register it (init.sh does)"
+    else
+      fail "resource provider ${ns} is ${state:-unknown} and you cannot register it — needs Contributor or Owner"
+    fi
+  done
+
+  # Can this login read cost at all? On a CSP subscription the partner must allow customer cost visibility.
+  local q code
+  q=$(az rest --method post \
+      --url "${ARM}/subscriptions/${sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01" \
+      --body '{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}' \
+      -o json 2>&1)
+  if jq -e '.properties.rows' >/dev/null 2>&1 <<<"${q}"; then
+    pass "can read Cost Management data (month-to-date: $(jq -r '.properties.rows[0] | "\(.[0]) \(.[1] // "")"' <<<"${q}"))"
+  else
+    code=$(grep -oE '\((\w+)\)|"code": *"[A-Za-z]+"' <<<"${q}" | head -1)
+    if [[ "${quota}" == CSP_* ]]; then
+      fail "cannot read Cost Management data ${code} — on a CSP subscription the partner must enable cost visibility for the customer in Partner Center"
+    else
+      fail "cannot read Cost Management data ${code}"
+    fi
+  fi
+}
+
+for sub in "${SUBS[@]}"; do check_sub "${sub}"; done
+
+hdr "Summary for ${ME}"
+if [[ -n "${SUMMARY}" ]]; then printf "%b" "${SUMMARY}"; fi
+if [[ ${FAILS} -eq 0 ]]; then
+  printf "%b\n" "${c_grn}READY${c_off} — ${#SUBS[@]} subscription(s), ${WARNS} warning(s). Send this output to LumiTure."
+  exit 0
+fi
+printf "%b\n" "${c_red}NOT READY${c_off} — ${FAILS} failure(s), ${WARNS} warning(s). Fix the FAIL lines (or bring the person who can) before the session."
+exit 1

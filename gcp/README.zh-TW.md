@@ -14,6 +14,17 @@
 1. **已於 GCP Console 啟用 BigQuery 帳單匯出（含定價 / Detailed Usage Cost）。** 此為 Console 專屬步驟，無法由腳本代為開啟；建議於**正式介接前 24 小時完成**，確保匯出表已開始累積資料。
 2. 執行者具備於**帳單帳戶**與**匯出資料集**授予 IAM 角色之權限（帳單管理員／專案 IAM 管理員）。
 
+## 介接前權限檢查
+
+請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Cloud Shell 執行。此腳本**僅讀取、不做任何變更**，逐一確認 `init.sh` 在每個帳單帳戶上所需的權限，讓缺少的授權在會議前補齊，而非會議中才發現。
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
+bash preflight.sh <帳單帳戶 ID> [<帳單帳戶 ID> ...]
+```
+
+結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。若帳單帳戶是透過經銷商購買，腳本會列出經銷商的母帳戶——帳單管理員通常在經銷商端，可能需請經銷商代為授予 `roles/billing.viewer`。
+
 ## 必要權限
 
 | 角色 | 授予範圍 | 用途 | 必要性 |
@@ -31,6 +42,7 @@
 | `tutorial.md` | Cloud Shell 側欄逐步導覽 |
 | `onboard-wrapper.sh` | 客戶於導覽中執行的互動式 bash 包裝腳本 |
 | `init.sh` | 底層介接腳本（探索 + IAM 授權 + 表單值輸出） |
+| `preflight.sh` | 介接前唯讀權限檢查（見上方） |
 | `terraform/` | Terraform 模組——bash 流程的宣告式替代方案（相同 IAM 授權 + 選配自動提交）。見 `terraform/README.md` 與 `terraform/examples/`。 |
 
 ## 兩種執行方式
