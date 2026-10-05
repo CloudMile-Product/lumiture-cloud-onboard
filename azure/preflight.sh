@@ -167,21 +167,31 @@ check_sub() {
   done
 
   # Diagnostic only (init.sh never queries cost): can this login read cost at all?
-  local q code
-  q=$(az rest --method post \
-      --url "${ARM}/subscriptions/${sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01" \
-      --body '{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}' \
-      -o json 2>&1)
+  local q qerr i
+  qerr=$(mktemp)
+  for i in 1 2; do
+    # stdout only: az may print WARNING lines on stderr that are not part of the JSON.
+    q=$(az rest --method post \
+        --url "${ARM}/subscriptions/${sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01" \
+        --body '{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"c":{"name":"Cost","function":"Sum"}}}}' \
+        -o json 2>"${qerr}")
+    jq -e '.properties.rows' >/dev/null 2>&1 <<<"${q}" && break
+    [[ ${i} -eq 1 ]] && sleep 5
+  done
   if jq -e '.properties.rows' >/dev/null 2>&1 <<<"${q}"; then
     pass "can read Cost Management data (month-to-date: $(jq -r '.properties.rows[0] | "\(.[0]) \(.[1] // "")"' <<<"${q}"))"
   else
-    code=$(grep -oE '\((\w+)\)|"code": *"[A-Za-z]+"' <<<"${q}" | head -1)
-    if [[ "${quota}" == CSP_* ]]; then
-      warn "cannot read Cost Management data ${code} — on a CSP subscription the partner may need to enable cost visibility for the customer in Partner Center"
+    local why
+    why=$(grep -v '^WARNING' "${qerr}" | tr '\n' ' ' | cut -c1-200)
+    if grep -q 'Too Many Requests\|"429"' <<<"${why}"; then
+      info "Cost Management throttled this check (HTTP 429) — a rate limit, not a permission problem; re-run later if you want this diagnostic"
+    elif [[ "${quota}" == CSP_* ]]; then
+      warn "cannot read Cost Management data (${why:-no error text}) — on a CSP subscription the partner may need to enable cost visibility for the customer in Partner Center"
     else
-      warn "cannot read Cost Management data ${code}"
+      warn "cannot read Cost Management data (${why:-no error text})"
     fi
   fi
+  rm -f "${qerr}"
 }
 
 for sub in "${SUBS[@]}"; do check_sub "${sub}"; done
