@@ -46,9 +46,11 @@ Every other argument defaults correctly for production: **subscription** = your 
 Run this a few days ahead in Azure Cloud Shell (Bash), **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means none of the consent or permission prerequisites it checks is missing, so a missing role gets fixed before the session instead of during it. Anything it cannot verify (for example role-assignment rights granted only through a conditional assignment) counts as `NOT READY`. Complete admin consent first (it is checked too), and if your role comes from PIM, activate it before running.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
-bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...]     # add --no-usage for billing-only
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/7b68383bc6d9b5cf309c999dded8ea607e68253d/azure/preflight.sh
+echo "7a92936ac16cbb53fa881e80205e2ff7fc94523423fa3f462f3711ee607e7c8d  preflight.sh" | sha256sum -c - && bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...]     # add --no-usage for billing-only
 ```
+
+The URL is pinned to a reviewed commit (tag `preflight-v1`), and `sha256sum -c` refuses to run a file that differs from it by even one byte — so what runs in your shell is exactly what was reviewed.
 
 It ends with `READY` or `NOT READY`; each `FAIL` line says what is missing or what to do. Permissions are evaluated at subscription scope from your role assignments; deny assignments and grants that exist only on a resource group are not evaluated.
 

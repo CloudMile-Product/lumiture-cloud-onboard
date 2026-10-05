@@ -71,9 +71,11 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Azure Cloud Shell（Bash）執行。此腳本**僅讀取，不變更任何雲端資源**。結果為 `READY` 代表腳本檢查的管理員同意與權限前置條件皆已具備；無法確認的項目（例如僅透過「有條件的角色指派」取得的指派權限）一律視為 `NOT READY`。請先完成管理員同意（腳本也會檢查）；若角色來自 PIM，請先啟用再執行。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/azure/preflight.sh
-bash preflight.sh <訂用帳戶 ID> [<訂用帳戶 ID> ...]     # 僅介接帳單時加上 --no-usage
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/7b68383bc6d9b5cf309c999dded8ea607e68253d/azure/preflight.sh
+echo "7a92936ac16cbb53fa881e80205e2ff7fc94523423fa3f462f3711ee607e7c8d  preflight.sh" | sha256sum -c - && bash preflight.sh <訂用帳戶 ID> [<訂用帳戶 ID> ...]     # 僅介接帳單時加上 --no-usage
 ```
+
+網址固定在已審查的版本（tag `preflight-v1`），`sha256sum -c` 會拒絕執行任何與該版本有一個位元組不同的檔案——確保在您環境中執行的，正是經過審查的那一份。
 
 結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會說明缺少什麼或下一步該怎麼做。權限以您在訂用帳戶層級的角色指派評估；拒絕指派（deny assignment）及僅授予於資源群組層級的權限不在評估範圍內。
 
