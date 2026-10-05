@@ -16,16 +16,17 @@
 
 ## 介接前權限檢查
 
-請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Cloud Shell 執行。此腳本**僅讀取，不變更任何雲端資源**。結果為 `READY` 代表 `init.sh` 不會因權限或匯出問題中斷，讓缺少的授權在會議前補齊，而非會議中才發現。若同時介接用量／Rightsizing，請加上 `--with-usage`。
+請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Cloud Shell 執行。此腳本**僅讀取，不變更任何雲端資源**。結果為 `READY` 代表腳本檢查的前置條件皆已具備，讓缺少的授權在會議前補齊，而非會議中才發現；無法確認的項目一律視為 `NOT READY`。若同時介接用量／Rightsizing，請加上 `--with-usage`。
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
 bash preflight.sh <帳單帳戶 ID> [<帳單帳戶 ID> ...]
 ```
 
-結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會指出缺少的角色。匯出啟用未滿一天、尚無資料時會顯示 `NOT READY`（`init.sh` 遇到空的匯出會中止），待資料進來後再執行一次即可。若帳單帳戶是透過經銷商購買，腳本會列出經銷商的母帳戶——帳單管理員通常在經銷商端，可能需請經銷商代為授予 `roles/billing.viewer`。
+結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會說明缺少什麼或下一步該怎麼做。匯出啟用未滿一天、尚無資料時會顯示 `NOT READY`（`init.sh` 遇到空的匯出會中止），待資料進來後再執行一次即可。若帳單帳戶是透過經銷商購買，腳本會列出經銷商的母帳戶——帳單管理員通常在經銷商端，可能需請經銷商代為授予 `roles/billing.viewer`。
 
 執行前須知：
+- 不在評估範圍：組織政策（例如「網域限制共用」可能阻擋授權給貴組織以外的 LumiTure 服務帳戶）、VPC Service Controls，以及 BigQuery 資料集細部 ACL 強制模式。若貴公司有啟用，請先與 GCP 管理員確認。
 - 貴公司的 Cloud Audit Logs 會以您的身分記錄這些讀取呼叫（`testIamPermissions`、`getIamPolicy`、資料集列表、BigQuery dry run）——屬預期行為，不會寫入任何資料。
 - 若帳單帳戶下專案很多，自動掃描會逐一列出各專案的資料集，可能需要較長時間；可加上 `--export-project <專案 ID>` 略過掃描。
 - 請勿以 `bash -x` 執行：除錯追蹤會印出您的存取權杖，該輸出不可分享給任何人。

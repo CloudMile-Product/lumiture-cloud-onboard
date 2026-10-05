@@ -190,8 +190,9 @@ discover_billing_account() {
 }
 
 # List dataset / table IDs for a project as newline-separated names (quietly).
-bq_datasets() { bq ls --project_id="$1" --format=json 2>/dev/null | jq -r '.[]?.datasetReference.datasetId' 2>/dev/null; }
-bq_tables()   { bq ls --format=json --max_results=1000 "${1}:${2}" 2>/dev/null | jq -r '.[]?.tableReference.tableId' 2>/dev/null; }
+# sed drops anything bq prints before its JSON (first-run banner, log-file warnings).
+bq_datasets() { bq ls --project_id="$1" --format=json 2>/dev/null | sed -n '/^[{[]/,$p' | jq -r '.[]?.datasetReference.datasetId' 2>/dev/null; }
+bq_tables()   { bq ls --format=json --max_results=1000 "${1}:${2}" 2>/dev/null | sed -n '/^[{[]/,$p' | jq -r '.[]?.tableReference.tableId' 2>/dev/null; }
 
 # Locate the billing export by its output tables. The export config itself is
 # Console-only, but the tables it writes have fixed names: the Detailed Usage
@@ -209,7 +210,8 @@ autodetect_export() {
   local p d
   for p in ${projects}; do
     for d in $(bq_datasets "${p}"); do
-      if bq_tables "${p}" "${d}" | grep -qx "${detailed_table}"; then
+      # grep without -q reads the whole list; -q can exit early and SIGPIPE jq under pipefail.
+      if bq_tables "${p}" "${d}" | grep -Fx "${detailed_table}" >/dev/null; then
         EXPORT_PROJECT_ID="${p}"; DETAILED_USAGE_DATASET="${d}"
         ok "  Detailed Usage Cost → project=${p} dataset=${d}"
         break 2
@@ -220,7 +222,7 @@ autodetect_export() {
 
   # Pass 2 — Pricing must live in the same project (we grant and query there).
   for d in $(bq_datasets "${EXPORT_PROJECT_ID}"); do
-    if bq_tables "${EXPORT_PROJECT_ID}" "${d}" | grep -qx "cloud_pricing_export"; then
+    if bq_tables "${EXPORT_PROJECT_ID}" "${d}" | grep -Fx "cloud_pricing_export" >/dev/null; then
       PRICING_DATASET="${d}"
       ok "  Pricing → project=${EXPORT_PROJECT_ID} dataset=${d}"
       break
