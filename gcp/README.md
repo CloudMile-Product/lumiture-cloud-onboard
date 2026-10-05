@@ -24,14 +24,14 @@ Click the badge → Google Cloud Shell opens in **terminal + tutorial** layout (
 
 ## Before the session — permission check
 
-Run this a few days ahead, **as the person who will run the onboarding**. It is read-only and changes nothing. It checks every permission `init.sh` needs on each billing account, so a missing grant gets fixed before the session instead of during it.
+Run this a few days ahead, **as the person who will run the onboarding**. It is read-only and makes no cloud changes. `READY` means `init.sh` should not stop on a permission or export problem for those billing accounts, so a missing grant gets fixed before the session instead of during it. Add `--with-usage` if usage / rightsizing will be onboarded too.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
 bash preflight.sh <BILLING_ACCOUNT_ID> [<BILLING_ACCOUNT_ID> ...]
 ```
 
-It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
+It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. An export enabled less than a day ago shows `NOT READY` until its first data lands, because `init.sh` stops on an empty export. On a billing account bought through a reseller, it prints the reseller's parent account — the reseller usually holds Billing Account Administrator, so they may need to grant `roles/billing.viewer` instead.
 
 ## What it does
 
