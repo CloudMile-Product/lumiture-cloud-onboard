@@ -2,9 +2,10 @@
 # LumiTure GCP pre-session check — READ-ONLY, makes no cloud changes.
 #
 # Run in Google Cloud Shell as the SAME person who will drive the onboarding
-# session. READY means init.sh (default dataset grant scope) should not stop on
-# a permission or export problem for these billing accounts, so a missing grant
-# is found days before the session instead of halfway through it.
+# session. READY means none of the prerequisites it checks for init.sh (default
+# dataset grant scope) is missing, and anything it cannot verify counts as NOT
+# READY, so a missing grant is found days before the session instead of halfway
+# through it.
 #
 # Usage:
 #   bash preflight.sh <BA_ID> [<BA_ID> ...] [--export-project <id>] [--with-usage] [--scoping-project <id>]
@@ -48,7 +49,7 @@ done
 
 for t in gcloud bq jq curl; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }; done
 # First bq run in a fresh shell prints a welcome banner on stdout; get it out of the way.
-bq version >/dev/null 2>&1
+bq version </dev/null >/dev/null 2>&1
 
 ME=$(gcloud config get-value account 2>/dev/null)
 TOK=$(gcloud auth print-access-token 2>/dev/null)
@@ -65,8 +66,8 @@ else
 fi
 
 # POST <url> testIamPermissions with the given permissions; prints the granted ones.
-# Returns 1 (with a note on stderr) when the check itself failed, so callers never
-# report an API or network error as a missing permission.
+# Returns 1 when the check itself failed (reason in NOTE_F, shown by the caller), so
+# callers never report an API or network error as a missing permission.
 test_perms() {
   local url="$1"; shift
   local body resp rc
@@ -76,11 +77,13 @@ test_perms() {
     -H @- -H "Content-Type: application/json" -d "${body}")
   rc=$?
   if [[ ${rc} -ne 0 || -z "${resp}" ]]; then
-    printf "  %b %s\n" "${c_ylw}note${c_off}" "permission check got no complete response (curl exit ${rc}) — re-run this check" >&2
+    echo "no complete response, curl exit ${rc}" >"${NOTE_F}"
     return 1
   fi
   if ! jq -e 'type == "object" and (has("error") | not)' >/dev/null 2>&1 <<<"${resp}"; then
-    printf "  %b %s\n" "${c_ylw}note${c_off}" "permission check API error: $(jq -r '.error.message? // "unexpected response"' 2>/dev/null <<<"${resp}" | cut -c1-200)" >&2
+    local why
+    why=$(jq -r '.error.message? // empty' 2>/dev/null <<<"${resp}" | cut -c1-200)
+    echo "API error: ${why:-unexpected non-JSON response}" >"${NOTE_F}"
     return 1
   fi
   jq -r '.permissions[]?' <<<"${resp}"
@@ -88,16 +91,17 @@ test_perms() {
 has() { grep -qx "$1" <<<"$2"; }
 
 # bq ls as JSON. Empty project or BigQuery API off → empty list; any other error → return 1.
-UNREAD_F=$(mktemp); trap 'rm -f "${UNREAD_F}"' EXIT
+UNREAD_F=$(mktemp); NOTE_F=$(mktemp); trap 'rm -f "${UNREAD_F}" "${NOTE_F}"' EXIT
 # Drops anything bq prints before its JSON (banners, "WARNING: Could not setup log file").
 json_only() { sed -n '/^[{[]/,$p'; }
 bq_ls_json() {
-  local raw out
-  raw=$(bq ls --format=json --max_results=1000 "$@" 2>/dev/null)
+  local raw out rc
+  raw=$(bq ls --format=json --max_results=1000 "$@" </dev/null 2>/dev/null)
+  rc=$?
   out=$(json_only <<<"${raw}")
   if [[ -n "${out}" ]]; then
     printf '%s' "${out}"
-  elif [[ -z "${raw}" || "$(tr '\n' ' ' <<<"${raw}" | tr -s ' ')" == *"has not enabled BigQuery"* ]]; then
+  elif [[ ( -z "${raw}" && ${rc} -eq 0 ) || "$(tr '\n' ' ' <<<"${raw}" | tr -s ' ')" == *"has not enabled BigQuery"* ]]; then
     printf '[]'
   else
     echo x >>"${UNREAD_F}"; printf '[]'; return 1
@@ -143,7 +147,7 @@ check_ba() {
   local granted
   if ! granted=$(test_perms "https://cloudbilling.googleapis.com/v1/billingAccounts/${ba}:testIamPermissions" \
       billing.accounts.get billing.accounts.getIamPolicy billing.accounts.setIamPolicy billing.resourceAssociations.list); then
-    fail "could not check your permissions on ${ba} (see the note above) — re-run this check"
+    fail "could not check your permissions on ${ba} ($(cat "${NOTE_F}")) — re-run this check"
     return
   fi
 
@@ -273,7 +277,7 @@ check_export_project() {
   # Granting READER on a dataset needs bigquery.datasets.update — project-level, or OWNER on the dataset.
   if ! granted=$(test_perms "https://cloudresourcemanager.googleapis.com/v1/projects/${proj}:testIamPermissions" \
       bigquery.datasets.update); then
-    fail "could not check your BigQuery permissions on ${proj} (see the note above) — re-run this check"
+    fail "could not check your BigQuery permissions on ${proj} ($(cat "${NOTE_F}")) — re-run this check"
     return
   fi
   local d acl
@@ -298,7 +302,7 @@ check_scoping_project() {
   local granted msg
   if ! granted=$(test_perms "https://cloudresourcemanager.googleapis.com/v1/projects/${proj}:testIamPermissions" \
       resourcemanager.projects.getIamPolicy resourcemanager.projects.setIamPolicy); then
-    msg="could not check your IAM permissions on scoping project ${proj} (see the note above)"
+    msg="could not check your IAM permissions on scoping project ${proj} ($(cat "${NOTE_F}"))"
     if [[ ${WITH_USAGE} -eq 1 ]]; then fail "${msg}"; else warn "${msg}"; fi
     return
   fi

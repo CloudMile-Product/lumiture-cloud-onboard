@@ -2,9 +2,9 @@
 # LumiTure Azure pre-session check — READ-ONLY, makes no cloud changes.
 #
 # Run in Azure Cloud Shell (Bash) as the SAME person who will drive the onboarding
-# session. READY means azure/init.sh should not stop on a consent or permission
-# problem for these subscriptions, so a missing role is found days before the
-# session instead of halfway through it.
+# session. READY means none of the consent or permission prerequisites it checks
+# is missing, and anything it cannot verify counts as NOT READY, so a missing role
+# is found days before the session instead of halfway through it.
 #
 # Checked at subscription scope from your role assignments. Not evaluated: deny
 # assignments, grants that exist only on a resource group or resource, and Azure
@@ -83,30 +83,49 @@ JQ_ALLOWED='
 # certain roles or principals) can't be evaluated here, so they must not count as READY.
 # The permissions API omits conditions, so read the caller's role assignments directly.
 check_unconditional_delegation() {
-  local sub="$1" me_id asg defs='[]' rid def
-  if ! me_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null) || [[ -z "${me_id}" ]] \
-     || ! asg=$(az rest --method get -o json \
-          --url "${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/roleAssignments?\$filter=assignedTo('${me_id}')&api-version=2022-04-01" 2>/dev/null); then
-    fail "could not read your role assignments to confirm your role-assignment rights are unconditional — ask LumiTure to verify by hand"
+  local sub="$1" me_id asg='[]' page pages=0 url defs='[]' rid def skipped=0
+  if ! me_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null) || [[ -z "${me_id}" ]]; then
+    fail "could not read your user ID to check your role assignments — ask LumiTure to verify by hand"
+    return
+  fi
+  url="${ARM}/subscriptions/${sub}/providers/Microsoft.Authorization/roleAssignments?\$filter=assignedTo('${me_id}')&api-version=2022-04-01"
+  while [[ -n "${url}" && ${pages} -lt 20 ]]; do
+    pages=$((pages+1))
+    if ! page=$(az rest --method get -o json --url "${url}" 2>/dev/null); then
+      fail "could not read your role assignments to confirm your role-assignment rights are unconditional — ask LumiTure to verify by hand"
+      return
+    fi
+    asg=$(jq -c --argjson p "${page}" '. + ($p.value // [])' <<<"${asg}")
+    url=$(jq -r '.nextLink // empty' <<<"${page}")
+  done
+  if [[ -n "${url}" ]]; then
+    fail "your role-assignment list has more than 20 pages; the check is incomplete — ask LumiTure to verify by hand"
     return
   fi
   # Only assignments that apply at the subscription: its own scope, a management group, or root.
-  asg=$(jq -c --arg sub "/subscriptions/${sub}" '{value: [.value[] | select((.properties.scope | ascii_downcase) as $s
+  asg=$(jq -c --arg sub "/subscriptions/${sub}" '{value: [.[] | select((.properties.scope | ascii_downcase) as $s
         | $s == ($sub | ascii_downcase) or $s == "/" or ($s | startswith("/providers/microsoft.management/")))]}' <<<"${asg}")
   # Each assignment's role-definition permissions, tagged conditional or not.
   for rid in $(jq -r '[.value[].properties.roleDefinitionId] | unique | .[]' <<<"${asg}"); do
-    def=$(az rest --method get -o json --url "${ARM}${rid}?api-version=2022-04-01" 2>/dev/null) || continue
+    if ! def=$(az rest --method get -o json --url "${ARM}${rid}?api-version=2022-04-01" 2>/dev/null); then
+      skipped=$((skipped+1)); continue
+    fi
     defs=$(jq -c --arg id "${rid}" --argjson d "${def}" '. + [{id: $id, permissions: ($d.properties.permissions // [])}]' <<<"${defs}")
   done
-  local uncond cond want='["Microsoft.Authorization/roleAssignments/write"]'
+  local uncond cond want='["Microsoft.Authorization/roleAssignments/write"]' conds
   uncond=$(jq -c --argjson defs "${defs}" '{value: [.value[] | select(.properties.condition == null) | .properties.roleDefinitionId as $r | ($defs[] | select(.id == $r) | .permissions[])]}' <<<"${asg}")
   cond=$(jq -c --argjson defs "${defs}" '{value: [.value[] | select(.properties.condition != null) | .properties.roleDefinitionId as $r | ($defs[] | select(.id == $r) | .permissions[])]}' <<<"${asg}")
-  if [[ "$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${uncond}" | jq -r '.[]')" == "true" ]]; then
+  grants() { jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"$1" | jq -r '.[]'; }
+  if [[ "$(grants "${uncond}")" == "true" ]]; then
     pass "can assign roles to LumiTure (roleAssignments/write, unconditional)"
-  elif [[ "$(jq --argjson want "${want}" "${JQ_ALLOWED}" <<<"${cond}" | jq -r '.[]')" == "true" ]]; then
-    fail "your right to assign roles comes from a conditional assignment (limited to certain roles/principals), which this check can't evaluate — init.sh must assign Cost Management Reader, Storage Blob Data Reader, Storage Blob Data Contributor and a custom role to LumiTure's identities; get an unconditional Owner or User Access Administrator, or confirm the condition allows those"
+  elif [[ "$(grants "${cond}")" == "true" ]]; then
+    fail "your right to assign roles comes from a conditional assignment, which this check can't evaluate. init.sh assigns Cost Management Reader, Storage Blob Data Reader, Storage Blob Data Contributor and a custom role — none of them privileged admin roles. If your condition is the portal's 'allow assigning all roles except privileged administrator roles' option, init.sh will work: send this output to LumiTure to confirm (condition below)"
+    conds=$(jq -r '[.value[] | select(.properties.condition != null) | .properties.condition] | unique | .[]' <<<"${asg}")
+    while IFS= read -r c; do [[ -n "${c}" ]] && info "condition: $(tr -s ' \n' ' ' <<<"${c}" | cut -c1-400)"; done <<<"${conds}"
+  elif [[ ${skipped} -gt 0 ]]; then
+    fail "could not read ${skipped} of your role definition(s), so your role-assignment rights can't be confirmed — ask LumiTure to verify by hand"
   else
-    fail "could not confirm where your role-assignment rights come from (group or management-group assignment not resolvable here) — ask LumiTure to verify by hand"
+    fail "none of your role assignments at this subscription (or above) grants role-assignment rights, although the permissions list does — ask LumiTure to verify by hand"
   fi
 }
 
@@ -124,10 +143,13 @@ check_sub() {
   stenant=$(jq -r '.tenantId // empty' <<<"${s}")
   quota=$(jq -r '.subscriptionPolicies.quotaId' <<<"${s}")
   info "name: $(jq -r '.displayName' <<<"${s}") · state: $(jq -r '.state' <<<"${s}") · offer: ${quota}"
-  if [[ "$(jq -r '.state' <<<"${s}")" != "Enabled" ]]; then
-    fail "subscription is $(jq -r '.state' <<<"${s}"), not Enabled — init.sh's writes will fail; re-enable it first"
-    return
-  fi
+  local state
+  state=$(jq -r '.state' <<<"${s}")
+  case "${state}" in
+    Enabled) ;;
+    Warned|PastDue) warn "subscription is ${state} (billing issue) — it still accepts changes, but settle it before the session" ;;
+    *) fail "subscription is ${state} — init.sh's writes will fail; re-enable it first"; return ;;
+  esac
   if [[ -n "${stenant}" && "${stenant}" != "${TENANT}" ]]; then
     fail "subscription is in tenant ${stenant}, but you are signed in to ${TENANT} — run: az login --tenant ${stenant}"
     return
