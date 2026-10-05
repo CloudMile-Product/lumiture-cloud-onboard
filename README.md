@@ -24,6 +24,14 @@ Each cloud's grant is structurally different (GCP IAM on a BQ dataset; Azure adm
 
 **What is shared** is the *packaging and contract*, not the execution: a consistent variable/output shape per cloud, and a parallel same-shaped onboarding flow.
 
+## Releasing the preflight scripts
+
+Customers run `gcp/preflight.sh` and `azure/preflight.sh` under a highly privileged identity, so the READMEs pin each download to a reviewed commit plus its sha256 (current: tag `preflight-v1`). `main` is protected: changes land only through a reviewed PR. After merging a change to either script:
+
+1. Tag the merge commit: `git tag -a preflight-vN <sha> && git push origin preflight-vN`.
+2. Recompute each script's hash from that commit: `git show <sha>:gcp/preflight.sh | sha256sum` (same for `azure/`).
+3. Update the commit SHA and hash in the four per-cloud READMEs (EN + 繁中), and in any customer-facing letters or runbooks that quote them.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

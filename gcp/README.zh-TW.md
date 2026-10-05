@@ -19,9 +19,11 @@
 請於介接會議**數日前**，由**當天實際執行介接的同一人**於 Cloud Shell 執行。此腳本**僅讀取，不變更任何雲端資源**。結果為 `READY` 代表腳本檢查的前置條件皆已具備，讓缺少的授權在會議前補齊，而非會議中才發現；無法確認的項目一律視為 `NOT READY`。若同時介接用量／Rightsizing，請加上 `--with-usage`。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/main/gcp/preflight.sh
-bash preflight.sh <帳單帳戶 ID> [<帳單帳戶 ID> ...]
+curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-onboard/7b68383bc6d9b5cf309c999dded8ea607e68253d/gcp/preflight.sh
+echo "202c7f1f92876eb213617b9126556cdc35ff1d4fab087574d25be94e4e35ab4b  preflight.sh" | sha256sum -c - && bash preflight.sh <帳單帳戶 ID> [<帳單帳戶 ID> ...]
 ```
+
+網址固定在已審查的版本（tag `preflight-v1`），`sha256sum -c` 會拒絕執行任何與該版本有一個位元組不同的檔案——確保在您環境中執行的，正是經過審查的那一份。
 
 結果為 `READY` 或 `NOT READY`；每行 `FAIL` 會說明缺少什麼或下一步該怎麼做。匯出啟用未滿一天、尚無資料時會顯示 `NOT READY`（`init.sh` 遇到空的匯出會中止），待資料進來後再執行一次即可。若帳單帳戶是透過經銷商購買，腳本會列出經銷商的母帳戶——帳單管理員通常在經銷商端，可能需請經銷商代為授予 `roles/billing.viewer`。
 
