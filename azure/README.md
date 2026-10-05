@@ -52,6 +52,11 @@ bash preflight.sh <SUBSCRIPTION_ID> [<SUBSCRIPTION_ID> ...]     # add --no-usage
 
 It ends with `READY` or `NOT READY`; each `FAIL` line names the missing role. Permissions are evaluated at subscription scope from your role assignments; deny assignments and grants that exist only on a resource group are not evaluated.
 
+Good to know before running it:
+- Azure Policy is not evaluated: a policy such as allowed locations (`init.sh` creates storage in `eastasia` by default) or "no public storage accounts" can still block `init.sh`. Check with your Azure admin if your tenant enforces such policies.
+- Your Activity Log / Entra sign-in logs will show the read calls it makes under your identity (permissions list, provider reads, one Cost Management query per subscription) — expected, nothing is written.
+- Don't run it with `bash -x`: tracing can print access tokens, so that output must never be shared.
+
 ## What's in this directory
 
 | File | Purpose |
