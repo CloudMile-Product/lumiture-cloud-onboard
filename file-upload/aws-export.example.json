@@ -1,0 +1,25 @@
+{
+  "Name": "my-focus-export",
+  "DataQuery": {
+    "QueryStatement": "SELECT AvailabilityZone, BilledCost, BillingAccountId, BillingAccountName, BillingCurrency, BillingPeriodEnd, BillingPeriodStart, ChargeCategory, ChargeClass, ChargeDescription, ChargeFrequency, ChargePeriodEnd, ChargePeriodStart, CommitmentDiscountCategory, CommitmentDiscountId, CommitmentDiscountName, CommitmentDiscountStatus, CommitmentDiscountType, ConsumedQuantity, ConsumedUnit, ContractedCost, ContractedUnitPrice, EffectiveCost, InvoiceIssuerName, ListCost, ListUnitPrice, PricingCategory, PricingQuantity, PricingUnit, ProviderName, PublisherName, RegionId, RegionName, ResourceId, ResourceName, ResourceType, ServiceCategory, ServiceName, SkuId, SkuPriceId, SubAccountId, SubAccountName, Tags, x_CostCategories, x_Discounts, x_Operation, x_ServiceCode, x_UsageType FROM FOCUS_1_0_AWS",
+    "TableConfigurations": {
+      "FOCUS_1_0_AWS": {}
+    }
+  },
+  "DestinationConfigurations": {
+    "S3Destination": {
+      "S3Bucket": "YOUR_BUCKET",
+      "S3Prefix": "focus",
+      "S3Region": "us-east-1",
+      "S3OutputConfigurations": {
+        "OutputType": "CUSTOM",
+        "Format": "PARQUET",
+        "Compression": "PARQUET",
+        "Overwrite": "OVERWRITE_REPORT"
+      }
+    }
+  },
+  "RefreshCadence": {
+    "Frequency": "SYNCHRONOUS"
+  }
+}

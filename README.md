@@ -14,6 +14,8 @@ This repo holds **one sibling flow per cloud**. They share a consistent shape (a
 | **Azure** | [`azure/`](azure/) | Azure Cloud Shell + browser admin-consent | Admin-consent + Cost Management Reader + Storage Blob Data Reader | Bicep | ✅ Live |
 | **AWS** | — | CloudFormation Launch-Stack / AWS CloudShell | Cross-account IAM role (+ ExternalId) | CloudFormation | ⬜ Planned |
 
+**Cannot grant access?** Use the [file-upload fallback](file-upload/README.md): you export the billing files yourself and send them to LumiTure.
+
 Start with the per-cloud README:
 - **[`gcp/README.md`](gcp/README.md)** — "Open in Cloud Shell" badge → guided grant
 - **[`azure/README.md`](azure/README.md)** — open Azure Cloud Shell → clone → guided grant
