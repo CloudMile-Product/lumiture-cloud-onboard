@@ -20,7 +20,7 @@ Use it for a **one-time import** of past months, or, if you can keep sending fil
 | Cloud | Export | Format | Guide |
 |---|---|---|---|
 | AWS | **CUR 2.0** and **FOCUS 1.0** exports (Data Exports) | Parquet or CSV (gzip) | [`aws.md`](aws.md) |
-| Azure | **Cost and usage details (actual cost)** and **FOCUS** cost exports (Cost Management) | CSV (gzip optional) | [`azure.md`](azure.md) |
+| Azure | **Cost and usage details (actual)** and **FOCUS** cost exports (Cost Management); actual cost is read from MCA billing accounts today, see [`azure.md`](azure.md) | CSV (gzip optional) | [`azure.md`](azure.md) |
 | GCP | **Detailed usage cost** and **Pricing** BigQuery exports (not a FOCUS file) | Avro | [`gcp.md`](gcp.md) |
 
 For GCP send the two BigQuery exports, not a FOCUS file. Avro (not CSV) keeps nested columns such as `labels`, `credits` and `project`. Resource utilization (rightsizing) data is **not** part of this path; the detailed usage cost export above is billing data and is included.

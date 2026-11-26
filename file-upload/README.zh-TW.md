@@ -20,7 +20,7 @@
 | 雲 | 匯出內容 | 格式 | 指南 |
 |---|---|---|---|
 | AWS | **CUR 2.0** 與 **FOCUS 1.0** 兩份匯出（Data Exports） | Parquet 或 CSV（gzip） | [`aws.md`](aws.md) |
-| Azure | **Cost and usage details (actual cost)** 與 **FOCUS** 兩份成本匯出（Cost Management） | CSV（可 gzip） | [`azure.md`](azure.md) |
+| Azure | **Cost and usage details (actual)** 與 **FOCUS** 兩份成本匯出（Cost Management）；actual 目前只讀得到 MCA 帳戶，見 [`azure.md`](azure.md) | CSV（可 gzip） | [`azure.md`](azure.md) |
 | GCP | **Detailed usage cost** 與 **Pricing** 兩份 BigQuery 匯出（不是 FOCUS 檔） | Avro | [`gcp.md`](gcp.md) |
 
 GCP 請送這兩份 BigQuery 匯出，而不是 FOCUS 檔。用 Avro 而非 CSV，是為了保留 `labels`、`credits`、`project` 等巢狀欄位。資源使用率（rightsizing）資料**不在**這條路徑內；上表的 detailed usage cost 屬於帳單資料，**包含在內**。
