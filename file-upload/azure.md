@@ -1,4 +1,8 @@
-# Azure — export FOCUS cost
+# Azure — export actual cost and FOCUS cost
+
+Create **two** exports with the steps below, one of each type, at the **same scope**, and send the files of both: **Cost and usage details (actual)** (not amortized) and **Cost and usage details (FOCUS)**. The FOCUS limits in the next paragraph apply to the FOCUS export only.
+
+**Check your billing account type first.** LumiTure currently reads the actual-cost file of a **Microsoft Customer Agreement (MCA)** billing account. An Enterprise Agreement (EA) or pay-as-you-go export uses different column names, and its costs would not load. If you are on EA or pay-as-you-go, check with LumiTure before exporting.
 
 Run on the **subscription**, or on a billing scope that covers all the subscriptions you want to send (a resource-group export covers only that resource group) (EA enrollment / department / account, MCA billing account / profile / invoice section). **Management group scope is not supported for FOCUS exports**, and pay-as-you-go (MOSP) subscriptions don't support FOCUS ([Microsoft](https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-improved-exports)). For several subscriptions, use a billing-account-level export, or one export per subscription. Some pay-as-you-go sign-ups are on an MCA billing account; check your billing account type in the portal.
 
@@ -11,7 +15,7 @@ Run on the **subscription**, or on a billing scope that covers all the subscript
 ## Steps
 
 1. Open **Cost Management → Exports → Create**.
-2. Type **Cost and usage details (FOCUS)**, format **CSV** (gzip optional; send CSV, not Parquet), daily export.
+2. Type **Cost and usage details (actual)** for the first export and **Cost and usage details (FOCUS)** for the second; format **CSV** (gzip optional; send CSV, not Parquet), daily export. Give the two exports different names so their folders do not mix.
 3. Choose the destination storage account and container.
 4. Run the export. Each run is written to `<directory>/<export name>/<YYYYMMDD-YYYYMMDD>/<run ID>/` as several partitions (for example `part_0_0001.csv`, `part_0_0002.csv`) plus a `manifest.json` that lists them. The data is only complete with **every partition**: download everything from one completed run, and send all the partitions and the manifest with [`upload.sh`](upload.sh).
 

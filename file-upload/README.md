@@ -19,8 +19,8 @@ Use it for a **one-time import** of past months, or, if you can keep sending fil
 
 | Cloud | Export | Format | Guide |
 |---|---|---|---|
-| AWS | FOCUS 1.0 export (Data Exports) | Parquet or CSV (gzip) | [`aws.md`](aws.md) |
-| Azure | FOCUS cost export (Cost Management) | CSV (gzip optional) | [`azure.md`](azure.md) |
+| AWS | **CUR 2.0** and **FOCUS 1.0** exports (Data Exports) | Parquet or CSV (gzip) | [`aws.md`](aws.md) |
+| Azure | **Cost and usage details (actual)** and **FOCUS** cost exports (Cost Management); actual cost is read from MCA billing accounts today, see [`azure.md`](azure.md) | CSV (gzip optional) | [`azure.md`](azure.md) |
 | GCP | **Detailed usage cost** and **Pricing** BigQuery exports (not a FOCUS file) | Avro | [`gcp.md`](gcp.md) |
 
 For GCP send the two BigQuery exports, not a FOCUS file. Avro (not CSV) keeps nested columns such as `labels`, `credits` and `project`. Resource utilization (rightsizing) data is **not** part of this path; the detailed usage cost export above is billing data and is included.
@@ -60,5 +60,6 @@ LumiTure gives you the details privately; nothing about LumiTure's storage is pu
 | File | Purpose |
 |---|---|
 | [`aws.md`](aws.md), [`azure.md`](azure.md), [`gcp.md`](gcp.md) | How to produce the files |
-| [`aws-export.example.json`](aws-export.example.json) | A complete AWS Data Exports request to copy |
+| [`aws-export.example.json`](aws-export.example.json) | A complete AWS Data Exports request to copy (FOCUS 1.0) |
+| [`aws-cur2-export.example.json`](aws-cur2-export.example.json) | The same for CUR 2.0 |
 | [`upload.sh`](upload.sh) | Uploads one file to a signed URL. Embeds no credentials; the URL is the credential |
