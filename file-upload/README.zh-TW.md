@@ -19,8 +19,8 @@
 
 | 雲 | 匯出內容 | 格式 | 指南 |
 |---|---|---|---|
-| AWS | FOCUS 1.0 匯出（Data Exports） | Parquet 或 CSV（gzip） | [`aws.md`](aws.md) |
-| Azure | FOCUS 成本匯出（Cost Management） | CSV（可 gzip） | [`azure.md`](azure.md) |
+| AWS | **CUR 2.0** 與 **FOCUS 1.0** 兩份匯出（Data Exports） | Parquet 或 CSV（gzip） | [`aws.md`](aws.md) |
+| Azure | **Cost and usage details (actual cost)** 與 **FOCUS** 兩份成本匯出（Cost Management） | CSV（可 gzip） | [`azure.md`](azure.md) |
 | GCP | **Detailed usage cost** 與 **Pricing** 兩份 BigQuery 匯出（不是 FOCUS 檔） | Avro | [`gcp.md`](gcp.md) |
 
 GCP 請送這兩份 BigQuery 匯出，而不是 FOCUS 檔。用 Avro 而非 CSV，是為了保留 `labels`、`credits`、`project` 等巢狀欄位。資源使用率（rightsizing）資料**不在**這條路徑內；上表的 detailed usage cost 屬於帳單資料，**包含在內**。
@@ -60,5 +60,6 @@ curl -fsSLO https://raw.githubusercontent.com/CloudMile-Product/lumiture-cloud-o
 | 檔案 | 用途 |
 |---|---|
 | [`aws.md`](aws.md)、[`azure.md`](azure.md)、[`gcp.md`](gcp.md) | 如何產生檔案（英文） |
-| [`aws-export.example.json`](aws-export.example.json) | 完整的 AWS Data Exports 請求範例（請先替換 `YOUR_BUCKET`） |
+| [`aws-export.example.json`](aws-export.example.json) | 完整的 AWS Data Exports 請求範例：FOCUS 1.0（請先替換 `YOUR_BUCKET`） |
+| [`aws-cur2-export.example.json`](aws-cur2-export.example.json) | 同上，CUR 2.0 版（請先替換 `YOUR_BUCKET`） |
 | [`upload.sh`](upload.sh) | 把一個檔案上傳到簽名網址。不內嵌任何憑證；網址本身就是憑證 |

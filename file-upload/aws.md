@@ -1,6 +1,12 @@
-# AWS — export FOCUS 1.0
+# AWS — export CUR 2.0 and FOCUS 1.0
 
 Run in the **Organization management (payer) account**, or in a standalone account, in `us-east-1` (billing exports live there).
+
+Create **two** exports and send the files of both: **CUR 2.0** and **FOCUS 1.0**. The steps below are written for FOCUS 1.0; for CUR 2.0 follow the same steps with these differences:
+
+- **Console:** table **CUR 2.0** (SQL table `COST_AND_USAGE_REPORT`). Under the table settings turn on **Include resource IDs** and **Split cost allocation data**, set time granularity to **Hourly**, and keep every column.
+- **CLI:** use [`aws-cur2-export.example.json`](aws-cur2-export.example.json) instead of `aws-export.example.json`. It lists the CUR 2.0 columns explicitly and sets `INCLUDE_RESOURCES`, `INCLUDE_SPLIT_COST_ALLOCATION_DATA` and `TIME_GRANULARITY=HOURLY`. Its S3 prefix is `cur2`, so the two exports do not mix.
+- Whether creating a CUR 2.0 export also needs `cur:PutReportDefinition` (see Permissions) has not been tested; it is required for FOCUS.
 
 ## Console route
 
