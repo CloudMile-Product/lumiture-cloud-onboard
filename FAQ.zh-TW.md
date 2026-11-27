@@ -51,7 +51,7 @@
 | Azure | Cost Management 與 Reader 類角色；用量分析另需自訂角色，動作皆為 `read` | 唯讀 |
 | AWS | 帳單匯出所需的少量設定權限，加上讀取 CloudWatch 與 EC2 執行個體資訊 | **含少量寫入，見 Q7** |
 
-GCP 與 Azure 的逐步授權說明見 [`README.zh-TW.md`](README.zh-TW.md)。
+各雲端的逐步授權說明見 [`README.zh-TW.md`](README.zh-TW.md)；AWS 另見 [`aws/README.zh-TW.md`](aws/README.zh-TW.md)。
 
 ## Q7. AWS 也是完全沒有寫入權限嗎？
 
@@ -61,7 +61,7 @@ GCP 與 Azure 的逐步授權說明見 [`README.zh-TW.md`](README.zh-TW.md)。
 - `bcm-data-exports` 與 `cur` 的建立、修改、刪除匯出設定
 - `cloudformation:UpdateStackSet`
 
-這些不讀取或修改您的 VM、資料庫與儲存內容。完整 IAM policy 可另行提供，供貴司資安審閱。
+這些不讀取或修改您的 VM、資料庫與儲存內容。完整 IAM policy 公開於 [`aws/cloudformation/billing-role.yaml`](aws/cloudformation/billing-role.yaml)，可供貴司資安審閱。
 
 ## Q8. 貴司無法授權 IAM 給 LumiTure，怎麼辦？
 
