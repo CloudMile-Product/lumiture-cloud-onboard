@@ -94,7 +94,7 @@ Rightsizing／用量資料需要於**每個成員帳號**部署一組唯讀監�
 
 > **StackSet 名稱**：預設為 `LumiTureAccountMemberMonitoringSet-<帳號 ID>`（LumiTure 要求名稱在所有客戶間不可重複）。若已有先前建立、名為 `LumiTureAccountMemberMonitoringSet` 的 StackSet，則沿用。
 >
-> **重跑且 StackSet 已存在時**：ExternalId 參數為 NoEcho（寫入後讀不回來），腳本因此不輸出、也不送出用量表單值。若用量已接通則無須處理；否則請以 `--usage-external-id` 帶入**建立當次**的值。若 LumiTure 之後更新過託管範本，重跑會就地更新 StackSet（參數含 ExternalId 皆保留），成員帳號角色隨之取得新權限。
+> **重跑且 StackSet 已存在時**：ExternalId 參數為 NoEcho（寫入後讀不回來），腳本因此不輸出、也不送出用量表單值。若用量已接通則無須處理；否則請以 `--usage-external-id` 帶入**建立當次**的值。若 LumiTure 之後更新過託管範本，重跑會就地更新 StackSet（參數含 ExternalId 皆保留），成員帳號角色隨之取得新權限。腳本只會動屬於 LumiTure 的既有 StackSet（service-managed、LumiTure principal、預期的角色名稱），其他情況一律停止。
 
 > **付款帳號內的 EC2 不會自動涵蓋。** AWS 不會把 service-managed StackSet 部署到管理帳號本身，所以**跑在付款帳號裡的 EC2** 沒有用量資料；如需涵蓋，請在管理帳號以一般 stack 部署同一份 LumiTure 託管範本（上述 `--template-url`），`RoleName` 與用量 `ExternalId` 須相同。
 >

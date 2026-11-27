@@ -36,8 +36,9 @@
 #                                customers; an existing un-suffixed StackSet is reused)
 #   --member-role-name  <name>   default: LumiTureAccountMemberMonitoringRole
 #   --usage-external-id <id>     ExternalId for the member roles (SEPARATE from the
-#                                billing one). Default: generated locally. Required to
-#                                (re)submit usage when the StackSet already exists.
+#                                billing one). Default: generated locally. When the
+#                                StackSet already exists, pass the value it was created
+#                                with to submit usage LumiTure hasn't registered yet.
 #   --ou-ids            <id,..>  StackSet deployment targets (default: the org root —
 #                                every account). Comma-separated OU ids to narrow.
 #   --lumiture-api      <https://api.lumiture.ai>   for auto-submit; omit to skip submit
@@ -551,24 +552,52 @@ count_stack_instances() {
 # otherwise suffix the account id (LumiTure rejects a name any customer has used).
 resolve_stackset_name() {
   [[ -z "${STACKSET_NAME}" ]] || return 0
-  if [[ "${DRY_RUN}" -eq 0 ]] && aws cloudformation describe-stack-set --stack-set-name "${LEGACY_STACKSET_NAME}" \
-       --region "${AWS_REGION}" >/dev/null 2>&1; then
+  local out
+  if out=$(aws cloudformation describe-stack-set --stack-set-name "${LEGACY_STACKSET_NAME}" \
+             --region "${AWS_REGION}" --output json 2>&1); then
     STACKSET_NAME="${LEGACY_STACKSET_NAME}"
     log "  Found existing StackSet ${STACKSET_NAME} from an earlier run — reusing that name."
-  else
+  elif grep -q 'StackSetNotFoundException' <<<"${out}"; then
     STACKSET_NAME="${LEGACY_STACKSET_NAME}-${ACCOUNT_ID}"
+  else
+    # Guessing here could create a second StackSet that collides on the member role name.
+    die "Could not check for an existing StackSet ${LEGACY_STACKSET_NAME}: ${out}"
   fi
 }
 
-# Returns 0 when the StackSet's live template equals LumiTure's hosted copy
-# (both trimmed, as the server compares). Sets HOSTED_TB_FETCHED=0 on fetch failure.
-stackset_template_matches() {
-  local live hosted
-  HOSTED_TB_FETCHED=1
+# An existing StackSet is touched only if it is LumiTure's: service-managed, our
+# principal, our member role. Anything else may be the customer's own StackSet.
+verify_stackset_ownership() {
+  local ss model p_role p_arn
+  ss=$(aws cloudformation describe-stack-set --stack-set-name "${STACKSET_NAME}" \
+         --region "${AWS_REGION}" --output json 2>&1) \
+    || { fail "Could not read existing StackSet ${STACKSET_NAME}: ${ss}"; return 1; }
+  model=$(jq -r '.StackSet.PermissionModel // empty' <<<"${ss}")
+  p_role=$(jq -r '[.StackSet.Parameters[]? | select(.ParameterKey=="RoleName").ParameterValue] | first // empty' <<<"${ss}")
+  p_arn=$(jq -r '[.StackSet.Parameters[]? | select(.ParameterKey=="ThirdPartyPrincipalArn").ParameterValue] | first // empty' <<<"${ss}")
+  if [[ "${model}" != "SERVICE_MANAGED" || "${p_role}" != "${MEMBER_ROLE_NAME}" || "${p_arn}" != "${LUMITURE_PRINCIPAL_ARN}" ]]; then
+    fail "StackSet ${STACKSET_NAME} exists but is not LumiTure's (model=${model:-?}, RoleName=${p_role:-?}, principal=${p_arn:-?}) — refusing to touch it. Pass a different --stackset-name."
+    return 1
+  fi
+  ok "  Existing StackSet is LumiTure's (service-managed, LumiTure principal, role ${MEMBER_ROLE_NAME})"
+}
+
+# Compares the StackSet's live template with LumiTure's hosted copy the way the
+# server does: live body stripped, hosted bytes as-is (held in files, since
+# command substitution would drop the hosted copy's trailing newlines).
+# Sets TEMPLATE_STATE to match | differs | live_unreadable | hosted_unreachable.
+compare_stackset_template() {
+  local live tmp
   live=$(aws cloudformation describe-stack-set --stack-set-name "${STACKSET_NAME}" \
-           --region "${AWS_REGION}" --output json 2>/dev/null | jq -r '.StackSet.TemplateBody') || return 1
-  hosted=$(curl -fsS --max-time 30 "${STACKSET_TEMPLATE_URL}" 2>/dev/null) || { HOSTED_TB_FETCHED=0; return 1; }
-  [[ "$(trim "${live}")" == "$(trim "${hosted}")" ]]
+           --region "${AWS_REGION}" --output json 2>/dev/null | jq -r '.StackSet.TemplateBody // empty') || live=""
+  if [[ -z "${live}" ]]; then TEMPLATE_STATE=live_unreadable; return 0; fi
+  tmp=$(mktemp -d)
+  if ! curl -fsS --max-time 30 -o "${tmp}/hosted" "${STACKSET_TEMPLATE_URL}" 2>/dev/null; then
+    rm -rf "${tmp}"; TEMPLATE_STATE=hosted_unreachable; return 0
+  fi
+  printf '%s' "$(trim "${live}")" > "${tmp}/live"
+  if cmp -s "${tmp}/live" "${tmp}/hosted"; then TEMPLATE_STATE=match; else TEMPLATE_STATE=differs; fi
+  rm -rf "${tmp}"
 }
 
 # Polls a StackSet operation for up to 15 minutes; returns 0 only on SUCCEEDED.
@@ -594,14 +623,12 @@ wait_stackset_operation() {
 # fails the server's byte-compare on submit. Update it in place; UsePreviousValue
 # keeps the NoEcho ExternalId, so an already-connected integration keeps working.
 refresh_stackset_template() {
-  if stackset_template_matches; then
-    ok "  StackSet template matches LumiTure's hosted copy"
-    return 0
-  fi
-  if [[ "${HOSTED_TB_FETCHED}" -eq 0 ]]; then
-    warn "  could not fetch the hosted template to compare — skipping the template refresh."
-    return 0
-  fi
+  compare_stackset_template
+  case "${TEMPLATE_STATE}" in
+    match) ok "  StackSet template matches LumiTure's hosted copy"; return 0 ;;
+    live_unreadable) fail "Could not read StackSet ${STACKSET_NAME}'s template — not updating it; re-run."; return 1 ;;
+    hosted_unreachable) fail "Could not fetch LumiTure's hosted template (${STACKSET_TEMPLATE_URL}) — the StackSet can't be verified, so usage won't be submitted; re-run."; return 1 ;;
+  esac
   log "  StackSet template is older than LumiTure's hosted copy — updating every instance (parameters kept)…"
   local op_id
   op_id=$(aws cloudformation update-stack-set \
@@ -614,8 +641,14 @@ refresh_stackset_template() {
       ParameterKey=ThirdPartyPrincipalArn,UsePreviousValue=true \
       ParameterKey=ExternalId,UsePreviousValue=true \
     --operation-preferences FailureTolerancePercentage=50 \
-    --query OperationId --output text 2>&1) \
-    || { fail "update-stack-set failed: ${op_id}"; return 1; }
+    --query OperationId --output text 2>&1) || {
+      if grep -q 'OperationInProgressException' <<<"${op_id}"; then
+        fail "Another operation is running on StackSet ${STACKSET_NAME} — wait for it to finish in the CloudFormation console, then re-run."
+      else
+        fail "update-stack-set failed: ${op_id}"
+      fi
+      return 1
+    }
   wait_stackset_operation "${op_id}" || return 1
   ok "  StackSet updated to LumiTure's current template"
 }
@@ -655,6 +688,11 @@ deploy_usage_stackset() {
   log "Phase 3.5 — Creating StackSet ${STACKSET_NAME} from LumiTure's hosted template…"
   local out
   if [[ "${DRY_RUN}" -eq 1 ]]; then
+    if [[ "${USAGE_EXTERNAL_ID_EXPLICIT}" -eq 0 ]] && aws cloudformation describe-stack-set \
+         --stack-set-name "${STACKSET_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+      USAGE_EXTERNAL_ID=""
+      log "DRY-RUN: StackSet ${STACKSET_NAME} exists — a real run would reuse it and emit no usage values"
+    fi
     run aws cloudformation create-stack-set --stack-set-name "${STACKSET_NAME}" --template-url "${STACKSET_TEMPLATE_URL}"
   elif out=$(aws cloudformation create-stack-set \
         --stack-set-name "${STACKSET_NAME}" \
@@ -679,6 +717,8 @@ deploy_usage_stackset() {
       warn "  Its ExternalId cannot be read back (NoEcho), so this run will NOT emit or submit usage values."
       warn "  If usage is already connected, nothing to do. Otherwise re-run with --usage-external-id <the value from the run that created it>."
     fi
+    verify_stackset_ownership || return 0
+    refresh_stackset_template || return 0
   else
     fail "StackSet create failed: ${out}"
     return 0
@@ -697,8 +737,6 @@ deploy_usage_stackset() {
     read -r total current < <(count_stack_instances)
     if [[ "${total}" -gt 0 ]]; then
       log "  StackSet already has ${total} instance(s) — skipping instance creation"
-      refresh_stackset_template || return 0
-      read -r total current < <(count_stack_instances)
       check_instances_current "${total}" "${current}"
       return 0
     fi
@@ -737,7 +775,7 @@ check_instances_current() {
   if [[ "${total}" -eq 0 ]]; then
     fail "StackSet has no instances — no member account got the monitoring role."
   elif [[ "${current}" -lt "${total}" ]]; then
-    fail "StackSet instances: only ${current}/${total} CURRENT — LumiTure collects no usage data until all are. Fix the failed accounts in the CloudFormation console (or narrow --ou-ids) and re-run."
+    fail "StackSet instances: only ${current}/${total} CURRENT — LumiTure collects no usage data until all are. If a StackSet operation is still running, wait for it; otherwise fix the failed accounts in the CloudFormation console (or narrow --ou-ids). Then re-run."
   else
     ok "StackSet instances deployed: ${current}/${total} CURRENT"
     USAGE_DEPLOYED=1
@@ -752,7 +790,8 @@ emit_form_values() {
   log "Phase 4 — Form values ready for the LumiTure AWS wizard or API:"
   log "  billing wizard: ${LUMITURE_WIZARD_URL}"
   [[ "${WITH_USAGE}" -eq 1 ]] && log "  usage wizard:   ${LUMITURE_USAGE_WIZARD_URL}"
-  if [[ "${WITH_USAGE}" -eq 1 && -n "${USAGE_EXTERNAL_ID}" && -n "${STACKSET_NAME}" ]]; then
+  # USAGE_DEPLOYED is unset in --discover-only (nothing deployed yet) — emit then too.
+  if [[ "${WITH_USAGE}" -eq 1 && "${USAGE_DEPLOYED:-1}" -eq 1 && -n "${USAGE_EXTERNAL_ID}" && -n "${STACKSET_NAME}" ]]; then
     jq -n --arg account_id "${ACCOUNT_ID}" --arg role_arn "${ROLE_ARN}" \
       --arg policy_arn "${POLICY_ARN}" --arg external_id "${EXTERNAL_ID}" \
       --arg stackset_name "${STACKSET_NAME}" --arg role_name "${MEMBER_ROLE_NAME}" \
@@ -882,8 +921,8 @@ verify_onboarding() {
     || { fail "Role ${ROLE_NAME} not readable — was it created?"; trust=""; }
   if [[ -n "${trust}" ]]; then
     local principal eid
-    principal=$(jq -r --arg p "${LUMITURE_PRINCIPAL_ARN}" '[.Statement[]? | .Principal.AWS // empty | select(. == $p)] | first // empty' <<<"${trust}")
-    eid=$(jq -r --arg p "${LUMITURE_PRINCIPAL_ARN}" '[.Statement[]? | select((.Principal.AWS // empty) == $p) | .Condition.StringEquals."sts:ExternalId" // empty] | first // empty' <<<"${trust}")
+    principal=$(jq -r --arg p "${LUMITURE_PRINCIPAL_ARN}" '[.Statement[]? | (.Principal | objects | .AWS) // empty | select(. == $p)] | first // empty' <<<"${trust}")
+    eid=$(jq -r --arg p "${LUMITURE_PRINCIPAL_ARN}" '[.Statement[]? | select(((.Principal | objects | .AWS) // empty) == $p) | .Condition.StringEquals."sts:ExternalId" // empty] | first // empty' <<<"${trust}")
     if [[ "${principal}" == "${LUMITURE_PRINCIPAL_ARN}" ]]; then
       ok "  ✓ role trusts ${LUMITURE_PRINCIPAL_ARN}"
     else
@@ -932,13 +971,12 @@ verify_onboarding() {
       else
         fail "StackSet ThirdPartyPrincipalArn ('${p_arn}') is not ${LUMITURE_PRINCIPAL_ARN}."
       fi
-      if stackset_template_matches; then
-        ok "  ✓ StackSet template matches LumiTure's hosted copy byte-for-byte"
-      elif [[ "${HOSTED_TB_FETCHED}" -eq 0 ]]; then
-        warn "  could not fetch the hosted template to compare (network?) — LumiTure re-checks at submit."
-      else
-        fail "StackSet template body differs from LumiTure's hosted copy — the usage submit will be rejected. Deploy with --template-url only."
-      fi
+      compare_stackset_template
+      case "${TEMPLATE_STATE}" in
+        match) ok "  ✓ StackSet template matches LumiTure's hosted copy byte-for-byte" ;;
+        differs) fail "StackSet template body differs from LumiTure's hosted copy — the usage submit would be rejected. Re-run to update it." ;;
+        *) fail "Could not compare the StackSet template with LumiTure's hosted copy (${TEMPLATE_STATE}) — re-run." ;;
+      esac
     fi
   fi
 }
