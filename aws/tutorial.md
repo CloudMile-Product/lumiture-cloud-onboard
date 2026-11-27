@@ -24,10 +24,8 @@ Open **AWS CloudShell** from the console (the `>_` icon in the top bar) or <http
 CloudShell already has `aws` (v2), `jq`, and `git`, and uses your console identity. Clone this repo:
 
 ```bash
-git clone --branch aws-onboarding-kit https://github.com/CloudMile-Product/lumiture-cloud-onboard.git && cd lumiture-cloud-onboard/aws
+git clone https://github.com/CloudMile-Product/lumiture-cloud-onboard.git && cd lumiture-cloud-onboard/aws
 ```
-
-> Until this kit merges to `main`, keep the `--branch aws-onboarding-kit` flag; drop it after the merge.
 
 Confirm you're in the right account:
 
@@ -109,6 +107,18 @@ aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/LumiTureInte
 # the two export buckets LumiTure created (empty them first if you want them gone):
 aws s3 rb s3://lumiture-<ACCOUNT_ID>-cur --force
 aws s3 rb s3://lumiture-<ACCOUNT_ID>-focus --force
+```
+
+If you ran with `WITH_USAGE=1`, also remove the usage StackSet (unlink usage in the LumiTure app first). Use the StackSet name the script printed, and the OU or root ID it deployed to:
+
+```bash
+aws cloudformation delete-stack-instances --region us-east-1 \
+  --stack-set-name <STACKSET_NAME> --regions us-east-1 \
+  --deployment-targets OrganizationalUnitIds=<OU_OR_ROOT_ID> --no-retain-stacks
+# wait until the operation finishes, then:
+aws cloudformation delete-stack-set --region us-east-1 --stack-set-name <STACKSET_NAME>
+# optional — only if nothing else in your Organization uses service-managed StackSets:
+aws cloudformation deactivate-organizations-access --region us-east-1
 ```
 
 ---

@@ -18,7 +18,7 @@ Because the customer only creates a role + policy (LumiTure provisions the rest)
 
 ## Try it
 
-> ⚠️ **Run this in the Organization management (payer) account.** Member accounts are refused — both by this script and by LumiTure's backend — because onboarding a member account as if it were the payer has historically corrupted billing data. Standalone accounts (no Organization) work fine.
+> ⚠️ **Run this in the Organization management (payer) account.** Member accounts are refused by this script, because onboarding a member account as if it were the payer has historically corrupted billing data. Standalone accounts (no Organization) work fine.
 
 1. Open **AWS CloudShell**: <https://console.aws.amazon.com/cloudshell/> (any region)
 2. Clone + enter:
@@ -65,8 +65,11 @@ The policy is scoped for one job: managing the billing-data pipeline.
 |---|---|
 | Create/manage billing exports (`bcm-data-exports`, `cur`) | Read or touch any workload (no EC2/S3/RDS data access) |
 | Create + write the two dedicated `lumiture-<account>-cur/-focus` buckets | Write to **any other** S3 bucket (resources pinned by ARN) |
-| List Organization accounts, read account aliases, read its own role/policy | Modify IAM, create users, escalate |
-| Read CloudWatch metrics + EC2 instance *metadata* (usage integration) | Start/stop/change anything |
+| List Organization accounts, read account aliases, read its own role/policy | Create users, edit IAM policies or roles |
+| Update CloudFormation StackSets (`cloudformation:UpdateStackSet` on `*`, for the usage StackSet) | — |
+| Read CloudWatch metrics + EC2 instance *metadata* (usage integration) | Start, stop or modify instances |
+
+> `cloudformation:UpdateStackSet` is not resource-scoped in the policy LumiTure validates, so in principle it can update **any** StackSet in this account, not only LumiTure's. It's listed here so your security review sees it.
 
 ## Usage integration (optional)
 
@@ -74,16 +77,22 @@ Rightsizing/usage data needs a read-only monitoring role in **every member accou
 
 1. Enables **CloudFormation StackSets trusted access** on the Organization (one-time, org-wide — the reason this is opt-in rather than default)
 2. Creates the StackSet **from LumiTure's hosted template URL** — LumiTure byte-compares the deployed template against its hosted copy, so the script never uses a local file
-3. Deploys stack instances to the org root (or `--ou-ids` to narrow), waits, and fails the run if more than half the instances failed (LumiTure's own threshold)
+3. Deploys stack instances to the org root (or `--ou-ids` to narrow), waits, and fails the run unless **every** instance is `CURRENT` — LumiTure only starts collecting usage once all of them are
 4. Submits `stackset_name` / `role_name` / usage `external_id` after the billing integration succeeds — the usage ExternalId is a **separate value** from the billing one
 
 Billing must connect first; usage can always be added later from the [usage wizard](https://app.lumiture.ai/authorization/usage-integration/aws).
 
-> **Re-running with an existing StackSet:** the ExternalId parameter is write-only (NoEcho) — the script can't read it back. Keep the value from the run that created the StackSet, or pass `--usage-external-id` to match it.
+> **StackSet name:** defaults to `LumiTureAccountMemberMonitoringSet-<account-id>` (LumiTure requires the name to be unique across customers). A StackSet named `LumiTureAccountMemberMonitoringSet` from an earlier run is reused.
+>
+> **Re-running with an existing StackSet:** the ExternalId parameter is write-only (NoEcho) — the script can't read it back, so it skips emitting and submitting usage values. If usage is already connected there's nothing to do; otherwise pass `--usage-external-id` with the value from the run that created the StackSet. If LumiTure has updated its hosted template since then, the re-run updates the StackSet in place (parameters, including the ExternalId, are kept), so member roles pick up the new permissions.
+
+> **Payer-account EC2 is not covered automatically.** AWS never deploys a service-managed StackSet to the management account itself, so EC2 running *in the payer account* has no usage data unless you also create the monitoring role there by hand: deploy LumiTure's hosted template (the `--template-url` above) as a normal stack in the management account, with the same `RoleName` and usage `ExternalId`.
+>
+> **Reseller-billed accounts cannot onboard.** If your AWS bill comes from a reseller (AWS Partner), your account is a member of the reseller's Organization and the consolidated bill lives in their payer account — this kit refuses to run there. Contact your LumiTure rep.
 
 ## Failures are fatal
 
-Anything that would leave the integration half-wired — a drifted policy document, a missing attachment, a trust policy without the ExternalId, a mostly-failed StackSet — is collected, and the script **exits non-zero listing each problem** (and skips auto-submit). A green `AWS onboarding complete` means the structure was read back and checked, not merely that the script reached the end.
+Anything that would leave the integration half-wired — a drifted policy document, a missing attachment, a trust policy without the ExternalId, a StackSet with any instance not `CURRENT` — is collected, and the script **exits non-zero listing each problem** (and skips auto-submit). A green `AWS onboarding complete` means the structure was read back and checked, not merely that the script reached the end.
 
 Phase 5 deliberately verifies **structure, not data**: LumiTure provisions the exports at submit time and AWS's first daily run lands ~24h later. It includes the **current billing month from the 1st through today**, refreshed daily; prior months are not backfilled — so confirm the dashboard tomorrow, not today.
 

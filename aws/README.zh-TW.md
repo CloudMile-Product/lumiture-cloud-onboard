@@ -17,7 +17,7 @@
 
 ## 前置條件
 
-- ⚠️ **必須於 Organization 管理帳號（付款帳號，management/payer account）執行。** 成員帳號會被拒絕——本腳本與 LumiTure 後端都會擋下——因為將成員帳號誤當付款帳號介接，曾造成帳單資料毀損。無 Organization 的獨立帳號可正常介接（僅不適用用量 StackSet）。
+- ⚠️ **必須於 Organization 管理帳號（付款帳號，management/payer account）執行。** 成員帳號會被本腳本拒絕，因為將成員帳號誤當付款帳號介接，曾造成帳單資料毀損。無 Organization 的獨立帳號可正常介接（僅不適用用量 StackSet）。
 - 執行者需具備 IAM 管理權限（建立角色與政策）。
 - 帳號的帳單匯出配額需有餘裕：AWS 上限為 CUR 5 個／FOCUS 2 個，LumiTure 會各建立 1 個（腳本會先檢查）。
 
@@ -45,8 +45,11 @@
 |---|---|
 | 建立／管理帳單匯出（`bcm-data-exports`、`cur`） | 讀取或碰觸任何工作負載（無 EC2/S3/RDS 資料存取） |
 | 建立並寫入兩個專用 bucket（`lumiture-<帳號>-cur` / `-focus`，以 ARN 鎖定） | 寫入**其他任何** S3 bucket |
-| 列出 Organization 帳號、讀取帳號別名、讀取自身角色／政策 | 修改 IAM、建立使用者、權限提升 |
-| 讀取 CloudWatch 指標與 EC2 執行個體*中繼資料*（用量選配） | 啟動／停止／變更任何資源 |
+| 列出 Organization 帳號、讀取帳號別名、讀取自身角色／政策 | 建立使用者、修改 IAM 政策或角色 |
+| 更新 CloudFormation StackSet（`cloudformation:UpdateStackSet`，資源為 `*`，供用量 StackSet 使用） | —— |
+| 讀取 CloudWatch 指標與 EC2 執行個體*中繼資料*（用量選配） | 啟動、停止或修改執行個體 |
+
+> LumiTure 驗證的政策中，`cloudformation:UpdateStackSet` 未限定資源，理論上可更新本帳號內**任何** StackSet，不只 LumiTure 的。特此列出供貴司資安審閱。
 
 > ⚠️ **政策內容為精確比對契約**：LumiTure 以**完全相等**（非子集合）驗證政策文件。請勿手動增刪動作或調整順序——任何修改都會使權限檢查失敗。政策漂移時重跑 `./init.sh` 即可改回。
 
@@ -84,12 +87,18 @@ Rightsizing／用量資料需要於**每個成員帳號**部署一組唯讀監�
 
 1. 啟用 Organization 的 **CloudFormation StackSets 信任存取**（一次性、全組織生效——此為預設不開啟、需明確選配的原因）。
 2. 以 **LumiTure 託管的範本 URL** 建立 StackSet——LumiTure 會逐位元組比對部署範本與託管副本，故腳本一律用 `--template-url`，絕不用本地檔案。
-3. 部署 stack instances 至組織根（或以 `--ou-ids` 縮小範圍），等待完成；失敗比例超過一半（LumiTure 的門檻）則整體失敗。
+3. 部署 stack instances 至組織根（或以 `--ou-ids` 縮小範圍），等待完成；**所有** instance 都必須為 `CURRENT`，否則整體失敗——LumiTure 要全部 `CURRENT` 才開始收用量資料。
 4. 於帳單整合成功後送出 `stackset_name`／`role_name`／用量 `external_id`——用量的 ExternalId 與帳單的**是兩個不同的值**。
 
 帳單必須先接通；用量可日後再由[用量精靈](https://app.lumiture.ai/authorization/usage-integration/aws)補做。
 
-> **重跑且 StackSet 已存在時**：ExternalId 參數為 NoEcho（寫入後讀不回來）。請保留**建立當次**的值，或以 `--usage-external-id` 帶入相同值。
+> **StackSet 名稱**：預設為 `LumiTureAccountMemberMonitoringSet-<帳號 ID>`（LumiTure 要求名稱在所有客戶間不可重複）。若已有先前建立、名為 `LumiTureAccountMemberMonitoringSet` 的 StackSet，則沿用。
+>
+> **重跑且 StackSet 已存在時**：ExternalId 參數為 NoEcho（寫入後讀不回來），腳本因此不輸出、也不送出用量表單值。若用量已接通則無須處理；否則請以 `--usage-external-id` 帶入**建立當次**的值。若 LumiTure 之後更新過託管範本，重跑會就地更新 StackSet（參數含 ExternalId 皆保留），成員帳號角色隨之取得新權限。
+
+> **付款帳號內的 EC2 不會自動涵蓋。** AWS 不會把 service-managed StackSet 部署到管理帳號本身，所以**跑在付款帳號裡的 EC2** 沒有用量資料；如需涵蓋，請在管理帳號以一般 stack 部署同一份 LumiTure 託管範本（上述 `--template-url`），`RoleName` 與用量 `ExternalId` 須相同。
+>
+> **經銷商（AWS Partner）代為出帳的帳號無法介接。** 這類帳號是經銷商 Organization 的成員帳號，合併帳單在經銷商的付款帳號，本腳本會拒絕執行。請聯絡 LumiTure 窗口。
 
 ## 驗證與預期結果
 

@@ -219,7 +219,7 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 
 ### 6.1 前置條件
 
-1. ⚠️ **必須於 Organization 管理帳號（付款帳號，management/payer account）執行**。成員帳號會被腳本與 LumiTure 後端拒絕；無 Organization 的獨立帳號可正常介接（僅不適用用量 StackSet）。
+1. ⚠️ **必須於 Organization 管理帳號（付款帳號，management/payer account）執行**。成員帳號會被腳本拒絕；經銷商代為出帳的帳號（屬經銷商 Organization 的成員帳號）因此無法介接；無 Organization 的獨立帳號可正常介接（僅不適用用量 StackSet）。
 2. 執行者具備 IAM 管理權限（建立角色與政策）。
 3. 帳單匯出配額有餘裕：AWS 上限為 CUR 5 個／FOCUS 2 個，LumiTure 會各建 1 個（腳本會先檢查）。
 4. 於 AWS CloudShell 操作（無需本機安裝；任一區域皆可，腳本自動鎖定 `us-east-1`）。
@@ -232,8 +232,9 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 |---|---|
 | 建立／管理帳單匯出（`bcm-data-exports`、`cur`） | 讀取或碰觸任何工作負載 |
 | 建立並寫入兩個專用 bucket（`lumiture-<帳號>-cur` / `-focus`，以 ARN 鎖定） | 寫入其他任何 S3 bucket |
-| 列出 Organization 帳號、讀取帳號別名 | 修改 IAM、建立使用者、權限提升 |
-| 讀取 CloudWatch 指標與 EC2 執行個體中繼資料（用量選配） | 啟動／停止／變更任何資源 |
+| 列出 Organization 帳號、讀取帳號別名 | 建立使用者、修改 IAM 政策或角色 |
+| 更新 CloudFormation StackSet（`UpdateStackSet`，資源為 `*`；理論上可更新本帳號任何 StackSet） | —— |
+| 讀取 CloudWatch 指標與 EC2 執行個體中繼資料（用量選配） | 啟動、停止或修改執行個體 |
 
 > ⚠️ 政策內容為**精確比對契約**（LumiTure 以完全相等驗證），請勿手動修改；詳見 [`aws/README.zh-TW.md`](aws/README.zh-TW.md)。
 
@@ -254,7 +255,7 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 4. 腳本將：
    1. 確認為管理帳號並檢查匯出配額；
    2. 建立政策（LumiTure 驗證之精確文件）與跨帳號角色（ExternalId 把關）；
-   3. （選配 `--with-usage`）部署成員帳號監控 StackSet；
+   3. （選配 `--with-usage`）部署成員帳號監控 StackSet（不含付款帳號本身，見 [`aws/README.zh-TW.md`](aws/README.zh-TW.md#用量整合選配)）；
    4. 回讀驗證結構後，輸出需填回精靈的表單值。
 5. **完成介接**：至 LumiTure 精靈（<https://app.lumiture.ai/authorization/billing-integration/aws>）填入表單值，先按 **Check Permission** 再按 **Integrate**——送出後 LumiTure 即以該角色建立 bucket 與匯出。
 
@@ -268,7 +269,7 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 
 | 項目 | 預期 |
 |---|---|
-| 資料範圍 | **自整合時間點起算，無歷史回補**；歷史月份不會出現 |
+| 資料範圍 | **本計費月份自 1 日起**；不回補先前月份 |
 | 資料可見時間 | 送出整合後約 **24 小時**（AWS 首次每日匯出完成後） |
 | 腳本結束狀態 | 結構自檢全數通過才以 0 結束；任一項不通過則列出問題並以非零結束 |
 
@@ -280,7 +281,7 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 |---|---|---|
 | GCP | 近 3 個月 | 授權後隨即觸發同步；實際出現時間視 **GCP 帳單匯出產出**而定（GCP 端，通常延遲約 1 天） |
 | Azure | 當月（每月前 10 日內另含前一月） | 授權後約 **24 小時** |
-| AWS | **無**（自整合時間點起算） | 送出整合後約 **24 小時**（首次每日匯出完成後） |
+| AWS | 當月（自 1 日起；不回補先前月份） | 送出整合後約 **24 小時**（首次每日匯出完成後） |
 
 ---
 
@@ -294,7 +295,7 @@ LumiTure 透過**多租戶服務主體（SP）**讀取資料，該 SP 必須先�
 | 只想要成本、暫不要 Rightsizing | GCP：省略 `--with-usage`；Azure：以 `--no-usage --no-focus` 執行（最小權限）；AWS：不加 `--with-usage`（預設即最小）。 |
 | AWS 腳本顯示 MEMBER account 被拒 | 目前登入的是 Organization **成員帳號**。請改於**管理帳號（付款帳號）**執行——成員帳號介接會毀損整體帳單資料，故一律拒絕。 |
 | AWS 權限檢查（Check Permission）失敗 | 最常見原因是政策文件與 LumiTure 預期**不完全一致**（曾手動修改）——重跑 `./init.sh` 改回；剛建好角色的第一次檢查偶因 IAM 傳播延遲失敗，稍候重按一次。配額不足（CUR 5／FOCUS 2 已滿）時需先刪除既有匯出。 |
-| AWS 用量 StackSet 部署很慢／部分失敗 | StackSet 逐一部署至各成員帳號，需數分鐘；失敗比例 ≤ 50% 仍可送出（LumiTure 門檻），超過則於 CloudFormation Console 檢查失敗帳號後重試。 |
+| AWS 用量 StackSet 部署很慢／部分失敗 | StackSet 逐一部署至各成員帳號，需數分鐘。只要有任一 instance 不是 `CURRENT`，LumiTure 就不會收用量資料——請於 CloudFormation Console 修正失敗帳號（或以 `--ou-ids` 縮小範圍）後重跑。 |
 | 資安要求先審閱再授權 | 採**方式 B（Terraform／Bicep／CloudFormation）**，以 `plan` / what-if／範本審閱全部角色後再套用。 |
 
 ---
